@@ -1254,10 +1254,20 @@
 
   $("btn-reset-progress").addEventListener("click", function () {
     var n = Object.keys(state.progress).length;
-    if (!n) return;
-    if (!confirm("Reset all progress (" + n + " answered questions)? Questions themselves are kept.")) return;
+    if (!n && !Object.keys(state.daily).length) return;
+    if (!confirm("Reset ALL progress — " + n + " answered questions, daily tallies, marks, and cross-outs? Questions themselves are kept.")) return;
     dbClear(P_STORE).then(function () {
       state.progress = {};
+      state.daily = {};
+      state.marked = {};
+      state.struck = {};
+      try {
+        localStorage.removeItem("sat-session");
+        localStorage.removeItem("sat-marks");
+        localStorage.removeItem("sat-struck");
+        localStorage.removeItem("sat-daily");
+      } catch (e) {}
+      state.view = "plan";
       render();
     });
   });
