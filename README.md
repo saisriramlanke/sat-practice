@@ -9,6 +9,17 @@ just import questions, answer them, check correctness, read the explanation.
 Open `index.html` in any modern browser (Chrome, Edge, Firefox). That's it — no
 server, no build step, no dependencies.
 
+## The Plan tab (default home)
+
+A 30-day countdown plan to the Sep 12 SAT (goal 1500+): one R&W module (27 questions)
+plus one Math module (22 questions) of hard questions daily. The Today card shows both
+modules with progress bars and Start/Continue buttons that serve exactly the prescribed
+questions (randomized across skills, unanswered only). When a module's hard pool runs
+out, the schedule automatically rolls into high-volume mediums, recomputing daily
+targets from whatever actually remains — so doing extra ahead of schedule lightens
+future days. Below that, the full day-by-day schedule with ✓/missed/in-progress status
+and a streak counter. Daily volume is tallied per module and difficulty in localStorage.
+
 ## Layout
 
 Each module (Reading & Writing / Math) gets a landing page listing its domains

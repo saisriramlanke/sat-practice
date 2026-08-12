@@ -186,6 +186,77 @@ html, body {
 .col-accuracy.acc-mid { color: var(--amber); }
 .col-accuracy.acc-bad { color: var(--red); }
 
+/* ---------- plan view ---------- */
+
+.goal-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px 24px;
+  margin: 16px 0 8px;
+  background: #f9fafb;
+  flex-wrap: wrap;
+}
+
+.goal-big { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
+.goal-meta { font-size: 14px; color: var(--muted); margin-top: 4px; }
+.goal-side { text-align: right; }
+.goal-streak { font-size: 16px; font-weight: 700; color: var(--blue-dark); }
+.goal-pools { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+.plan-h2 { font-size: 18px; margin: 26px 0 10px; letter-spacing: -0.01em; }
+
+.plan-note { font-size: 13px; color: var(--muted); line-height: 1.55; margin: 0 0 14px; }
+
+.today-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 6px 18px;
+}
+
+.today-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 0;
+}
+.today-row + .today-row { border-top: 1px solid var(--border); }
+
+.today-name { font-weight: 600; font-size: 15px; width: 150px; flex: none; }
+.today-desc { font-size: 13px; color: var(--muted); width: 140px; flex: none; }
+.today-prog { display: flex; align-items: center; gap: 10px; flex: 1; }
+.bar-done { background: var(--green); }
+
+.plan-days { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+
+.plan-day {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 16px;
+  font-size: 13.5px;
+  border-bottom: 1px solid var(--border);
+}
+.plan-day:last-child { border-bottom: none; }
+.plan-day.plan-past { color: var(--muted); }
+.plan-day.plan-today { background: var(--blue-light); font-weight: 600; }
+
+.plan-day-num {
+  width: 26px;
+  flex: none;
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.plan-day-date { width: 110px; flex: none; }
+.plan-day-detail { flex: 1; color: inherit; }
+.plan-day-status { flex: none; font-size: 12.5px; color: var(--muted); }
+.plan-day-status.met { color: var(--green); font-weight: 700; font-size: 15px; }
+.plan-day-status.missed { color: var(--red); }
+
 /* ---------- empty state ---------- */
 
 .empty-state { text-align: center; color: var(--muted); padding-top: 90px; }

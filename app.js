@@ -76,13 +76,23 @@
 
   var MODULE_ORDER = ["Reading & Writing", "Math"];
 
+  // 30-day plan configuration (Sai's plan, committed 2026-08-11)
+  var PLAN = {
+    start: "2026-08-12",
+    lastDay: "2026-09-11",
+    testDate: "2026-09-12",
+    goal: "1500+",
+    quota: { "Reading & Writing": 27, "Math": 22 }, // one real module per day
+  };
+
   var state = {
     all: [],              // every question, sorted
     progress: {},         // id -> { correct: true|false|null }
     module: null,         // current module tab
     difficulties: {},     // {E:true,...} — empty means all
     statusFilter: "all",  // all | unanswered | answered
-    view: "topics",       // topics | practice
+    view: "plan",         // plan | topics | practice
+    daily: {},            // "YYYY-MM-DD" -> { "Module|Diff": count } answered tally
     set: [],              // current practice set
     index: 0,
     selectedLetter: null,
@@ -103,6 +113,12 @@
   var el = {
     topbar: $("topbar"),
     moduleTabs: $("module-tabs"),
+    planView: $("plan-view"),
+    planCountdown: $("plan-countdown"),
+    planStreak: $("plan-streak"),
+    planPools: $("plan-pools"),
+    todayCard: $("today-card"),
+    planDays: $("plan-days"),
     topicsView: $("topics-view"),
     moduleTitle: $("module-title"),
     practiceAllSub: $("practice-all-sub"),
@@ -196,9 +212,19 @@
   function renderTabs() {
     var mods = modulesPresent();
     el.moduleTabs.innerHTML = "";
+
+    var planBtn = document.createElement("button");
+    planBtn.className = "tab" + (state.view === "plan" ? " active" : "");
+    planBtn.textContent = "Plan";
+    planBtn.addEventListener("click", function () {
+      state.view = "plan";
+      render();
+    });
+    el.moduleTabs.appendChild(planBtn);
+
     mods.forEach(function (m) {
       var b = document.createElement("button");
-      b.className = "tab" + (m === state.module ? " active" : "");
+      b.className = "tab" + (state.view === "topics" && m === state.module ? " active" : "");
       b.textContent = m;
       b.addEventListener("click", function () {
         state.module = m;
@@ -207,6 +233,277 @@
         render();
       });
       el.moduleTabs.appendChild(b);
+    });
+  }
+
+  /* ---------------- plan engine ---------------- */
+
+  function dateKey(d) {
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  }
+  function parseDay(s) {
+    var p = s.split("-");
+    return new Date(+p[0], +p[1] - 1, +p[2]);
+  }
+  function addDays(d, n) {
+    var x = new Date(d);
+    x.setDate(x.getDate() + n);
+    return x;
+  }
+  var DAY_FMT = { weekday: "short", month: "short", day: "numeric" };
+
+  function tallyFor(dayKeyStr, mod, diff) {
+    var t = state.daily[dayKeyStr] || {};
+    if (diff) return t[mod + "|" + diff] || 0;
+    var sum = 0;
+    Object.keys(t).forEach(function (k) {
+      if (k.indexOf(mod + "|") === 0) sum += t[k];
+    });
+    return sum;
+  }
+
+  function recordDaily(q) {
+    var k = dateKey(new Date());
+    var t = state.daily[k] = state.daily[k] || {};
+    var key = q.module + "|" + q.difficulty;
+    t[key] = (t[key] || 0) + 1;
+    try { localStorage.setItem("sat-daily", JSON.stringify(state.daily)); } catch (e) {}
+  }
+
+  function unansweredPool(mod, diff) {
+    return state.all.filter(function (q) {
+      return q.module === mod && q.difficulty === diff && !state.progress[q.id];
+    });
+  }
+
+  function shuffle(arr) {
+    var a = arr.slice();
+    for (var i = a.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var tmp = a[i]; a[i] = a[j]; a[j] = tmp;
+    }
+    return a;
+  }
+
+  // Build the day-by-day schedule. Past days carry actual tallies; today and
+  // future days carry targets computed from the live unanswered pools, so the
+  // plan self-corrects as questions get done (or skipped).
+  function computePlan() {
+    var today = parseDay(dateKey(new Date()));
+    var start = parseDay(PLAN.start);
+    var last = parseDay(PLAN.lastDay);
+    var days = [];
+
+    var pools = {};
+    MODULE_ORDER.forEach(function (mod) {
+      pools[mod] = {
+        H: unansweredPool(mod, "H").length,
+        M: unansweredPool(mod, "M").length,
+      };
+    });
+    // Subtract what's already done today so today's row shows the full-day target.
+    var todayKey = dateKey(today);
+    MODULE_ORDER.forEach(function (mod) {
+      pools[mod].H += Math.min(tallyFor(todayKey, mod, "H"), PLAN.quota[mod]);
+    });
+
+    var totalFuture = Math.round((last - today) / 86400000) + 1;
+
+    for (var d = new Date(start); d <= last; d = addDays(d, 1)) {
+      var k = dateKey(d);
+      var row = { key: k, date: new Date(d), past: d < today, today: k === todayKey, targets: {}, done: {} };
+      MODULE_ORDER.forEach(function (mod) {
+        row.done[mod] = {
+          H: tallyFor(k, mod, "H"),
+          M: tallyFor(k, mod, "M"),
+          total: tallyFor(k, mod),
+        };
+        if (!row.past) {
+          var daysLeft = Math.round((last - d) / 86400000) + 1;
+          var h = Math.min(PLAN.quota[mod], pools[mod].H);
+          var m = 0;
+          if (h < PLAN.quota[mod] && pools[mod].M > 0) {
+            m = Math.ceil(pools[mod].M / daysLeft);
+          }
+          pools[mod].H -= h;
+          pools[mod].M -= Math.min(m, pools[mod].M);
+          row.targets[mod] = { H: h, M: m };
+        }
+      });
+      days.push(row);
+    }
+    return days;
+  }
+
+  function dayMet(row) {
+    return MODULE_ORDER.every(function (mod) {
+      return row.done[mod].total >= PLAN.quota[mod];
+    });
+  }
+
+  function computeStreak(days) {
+    var streak = 0;
+    for (var i = days.length - 1; i >= 0; i--) {
+      var row = days[i];
+      if (!row.past && !row.today) continue;
+      if (row.today) {
+        if (dayMet(row)) streak++;
+        continue; // an unfinished today doesn't break the streak
+      }
+      if (dayMet(row)) streak++;
+      else break;
+    }
+    return streak;
+  }
+
+  function startPracticeExact(set, label) {
+    if (!set.length) return;
+    state.set = set;
+    state.index = 0;
+    state.setLabel = label;
+    state.view = "practice";
+    startTimer(0);
+    render();
+  }
+
+  function startPlanModule(mod) {
+    var days = computePlan();
+    var todayRow = null;
+    days.forEach(function (r) { if (r.today) todayRow = r; });
+    if (!todayRow) { alert("Today is outside the plan window."); return; }
+    var t = todayRow.targets[mod] || { H: 0, M: 0 };
+    var needH = Math.max(0, t.H - todayRow.done[mod].H);
+    var needM = Math.max(0, t.M - todayRow.done[mod].M);
+    var set = shuffle(unansweredPool(mod, "H")).slice(0, needH)
+      .concat(shuffle(unansweredPool(mod, "M")).slice(0, needM));
+    if (!set.length) {
+      alert("Today's " + mod + " module is already done (or the pools are empty).");
+      return;
+    }
+    var dayNum = Math.round((parseDay(todayRow.key) - parseDay(PLAN.start)) / 86400000) + 1;
+    startPracticeExact(set, "Day " + dayNum + " — " + mod);
+  }
+
+  function renderPlan() {
+    var days = computePlan();
+    var today = dateKey(new Date());
+    var testDay = parseDay(PLAN.testDate);
+    var daysToTest = Math.round((testDay - parseDay(today)) / 86400000);
+
+    el.planCountdown.textContent =
+      "SAT: Sat, Sep 12 · " + (daysToTest > 0 ? daysToTest + " day" + (daysToTest === 1 ? "" : "s") + " to go" : daysToTest === 0 ? "TODAY" : "passed");
+
+    var streak = computeStreak(days);
+    el.planStreak.textContent = streak + "-day streak";
+
+    var poolBits = MODULE_ORDER.map(function (mod) {
+      var h = unansweredPool(mod, "H").length;
+      var m = unansweredPool(mod, "M").length;
+      return (mod === "Math" ? "Math" : "R&W") + ": " + h + " hard / " + m + " med left";
+    });
+    el.planPools.textContent = poolBits.join(" · ");
+
+    // Today card
+    el.todayCard.innerHTML = "";
+    var todayRow = null;
+    days.forEach(function (r) { if (r.today) todayRow = r; });
+    if (!todayRow) {
+      el.todayCard.textContent = "Today is outside the plan window (Aug 12 – Sep 11).";
+    } else {
+      MODULE_ORDER.forEach(function (mod) {
+        var t = todayRow.targets[mod] || { H: 0, M: 0 };
+        var target = t.H + t.M;
+        var done = Math.min(todayRow.done[mod].total, target || todayRow.done[mod].total);
+        var rowEl = document.createElement("div");
+        rowEl.className = "today-row";
+
+        var name = document.createElement("span");
+        name.className = "today-name";
+        name.textContent = mod;
+        var desc = document.createElement("span");
+        desc.className = "today-desc";
+        desc.textContent = t.H && t.M ? t.H + " hard + " + t.M + " medium" : t.H ? t.H + " hard" : t.M ? t.M + " medium" : "pool empty";
+
+        var prog = document.createElement("span");
+        prog.className = "today-prog";
+        var bar = document.createElement("span");
+        bar.className = "bar";
+        var fill = document.createElement("span");
+        fill.className = "bar-fill" + (target && done >= target ? " bar-done" : "");
+        fill.style.width = target ? Math.min(100, Math.round((done / target) * 100)) + "%" : "0%";
+        bar.appendChild(fill);
+        var frac = document.createElement("span");
+        frac.className = "frac";
+        frac.textContent = done + "/" + target;
+        prog.appendChild(bar);
+        prog.appendChild(frac);
+
+        var btn = document.createElement("button");
+        btn.className = "btn btn-primary btn-sm";
+        if (target && done >= target) {
+          btn.textContent = "Done ✓";
+          btn.disabled = true;
+        } else {
+          btn.textContent = done > 0 ? "Continue" : "Start";
+          btn.addEventListener("click", function () { startPlanModule(mod); });
+        }
+
+        rowEl.appendChild(name);
+        rowEl.appendChild(desc);
+        rowEl.appendChild(prog);
+        rowEl.appendChild(btn);
+        el.todayCard.appendChild(rowEl);
+      });
+    }
+
+    // Day list
+    el.planDays.innerHTML = "";
+    days.forEach(function (row, i) {
+      var d = document.createElement("div");
+      d.className = "plan-day" + (row.today ? " plan-today" : "") + (row.past ? " plan-past" : "");
+
+      var num = document.createElement("span");
+      num.className = "plan-day-num";
+      num.textContent = i + 1;
+
+      var date = document.createElement("span");
+      date.className = "plan-day-date";
+      date.textContent = row.date.toLocaleDateString(undefined, DAY_FMT);
+
+      var detail = document.createElement("span");
+      detail.className = "plan-day-detail";
+      if (row.past || row.today) {
+        var bits = MODULE_ORDER.map(function (mod) {
+          var label = mod === "Math" ? "Math" : "R&W";
+          return label + " " + row.done[mod].total + "/" + PLAN.quota[mod];
+        });
+        detail.textContent = bits.join(" · ");
+      } else {
+        var bits2 = MODULE_ORDER.map(function (mod) {
+          var t = row.targets[mod];
+          var label = mod === "Math" ? "Math" : "R&W";
+          if (!t || (!t.H && !t.M)) return label + " —";
+          var parts = [];
+          if (t.H) parts.push(t.H + "H");
+          if (t.M) parts.push(t.M + "M");
+          return label + " " + parts.join("+");
+        });
+        detail.textContent = bits2.join(" · ");
+      }
+
+      var status = document.createElement("span");
+      status.className = "plan-day-status";
+      if (row.past || row.today) {
+        if (dayMet(row)) { status.textContent = "✓"; status.classList.add("met"); }
+        else if (row.today) { status.textContent = "in progress"; }
+        else { status.textContent = "missed"; status.classList.add("missed"); }
+      }
+
+      d.appendChild(num);
+      d.appendChild(date);
+      d.appendChild(detail);
+      d.appendChild(status);
+      el.planDays.appendChild(d);
     });
   }
 
@@ -413,7 +710,7 @@
   function exitPractice() {
     stopTimer();
     closeNavigator();
-    state.view = "topics";
+    state.view = "plan"; // home base is the plan
     saveSession(); // clears the snapshot
     render();
   }
@@ -606,7 +903,8 @@
       el.rationaleWrap.classList.remove("hidden");
     }
 
-    // Record the attempt (latest attempt wins).
+    // Record the attempt (latest attempt wins) and today's tally.
+    recordDaily(q);
     var rec = { id: q.id, correct: verdict, ts: Date.now() };
     state.progress[q.id] = rec;
     dbPutAll(P_STORE, [rec]).catch(function (e) {
@@ -728,11 +1026,19 @@
     if (state.view === "practice") {
       el.topbar.classList.add("hidden"); // full-screen test feel, like Bluebook
       el.topicsView.classList.add("hidden");
+      el.planView.classList.add("hidden");
       el.practiceView.classList.remove("hidden");
       renderQuestion();
+    } else if (state.view === "plan") {
+      el.topbar.classList.remove("hidden");
+      el.practiceView.classList.add("hidden");
+      el.topicsView.classList.add("hidden");
+      el.planView.classList.remove("hidden");
+      renderPlan();
     } else {
       el.topbar.classList.remove("hidden");
       el.practiceView.classList.add("hidden");
+      el.planView.classList.add("hidden");
       el.topicsView.classList.remove("hidden");
       renderTopics();
     }
@@ -951,7 +1257,8 @@
     if (modulesPresent().indexOf(state.module) === -1) state.module = modulesPresent()[0] || null;
     state.marked = loadPersisted("sat-marks", {});
     state.struck = loadPersisted("sat-struck", {});
-    restoreSession(); // resume mid-practice if a snapshot exists
+    state.daily = loadPersisted("sat-daily", {});
+    if (!restoreSession()) state.view = "plan"; // land on the plan unless resuming practice
     render();
     applyPendingRestore();
   }).catch(function (e) {
