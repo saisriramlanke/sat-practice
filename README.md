@@ -32,8 +32,17 @@ jump). Check Answer stays — this is practice, so you still get the official
 rationale after each question.
 
 Keyboard: `A`–`D` select a choice, `Enter` checks (then advances), `←`/`→`
-navigate, `M` marks for review, `Esc` closes the navigator. Marks and
-cross-outs are per-session; answer history persists.
+navigate, `M` marks for review, `Esc` closes the navigator.
+
+## Resume where you left off
+
+Everything persists between sessions: closing the browser mid-practice and
+reopening the app drops you back into the same practice set, at the same
+question, with the timer where it was, your selection/checked state restored,
+and all marks and cross-outs intact. Marks and eliminations are permanent
+per-question (until you change them); "Exit practice" ends the session
+snapshot but keeps marks, cross-outs, and answer history. "Delete all
+questions" wipes everything.
 
 ## Getting the JSON out of the Question Bank
 

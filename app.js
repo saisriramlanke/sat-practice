@@ -88,11 +88,12 @@
     selectedLetter: null,
     checked: false,
     setLabel: "",         // label for the practice set
-    marked: {},           // id -> true (mark for review, session-only)
-    struck: {},           // id -> { letter: true } (eliminated choices, session-only)
+    marked: {},           // id -> true (mark for review, persisted)
+    struck: {},           // id -> { letter: true } (eliminated choices, persisted)
     elimMode: false,      // ABC cross-out mode
     timer: null,          // { start, intervalId }
     timerHidden: false,
+    pendingRestore: null, // one-shot: reapply selection/checked after resume
   };
 
   /* ---------------- elements ---------------- */
@@ -306,18 +307,91 @@
     return h ? h + ":" + mm + ":" + ss : mm + ":" + ss;
   }
 
-  function startTimer() {
+  function startTimer(offsetMs) {
     stopTimer();
-    state.timer = { start: Date.now(), intervalId: null };
-    el.timerEl.textContent = "00:00";
+    state.timer = { start: Date.now() - (offsetMs || 0), intervalId: null, ticks: 0 };
+    el.timerEl.textContent = fmtTime(offsetMs || 0);
     state.timer.intervalId = setInterval(function () {
-      if (state.timer) el.timerEl.textContent = fmtTime(Date.now() - state.timer.start);
+      if (!state.timer) return;
+      el.timerEl.textContent = fmtTime(Date.now() - state.timer.start);
+      // Persist elapsed time every few seconds so a resume is accurate.
+      if (++state.timer.ticks % 5 === 0) saveSession();
     }, 1000);
   }
 
   function stopTimer() {
     if (state.timer && state.timer.intervalId) clearInterval(state.timer.intervalId);
     state.timer = null;
+  }
+
+  /* ---------------- session persistence ---------------- */
+
+  function saveSession() {
+    try {
+      if (state.view !== "practice" || !state.set.length) {
+        localStorage.removeItem("sat-session");
+        return;
+      }
+      localStorage.setItem("sat-session", JSON.stringify({
+        setIds: state.set.map(function (q) { return q.id; }),
+        label: state.setLabel,
+        index: state.index,
+        elapsed: state.timer ? Date.now() - state.timer.start : 0,
+        timerHidden: state.timerHidden,
+        elimMode: state.elimMode,
+        checked: state.checked,
+        selectedLetter: state.selectedLetter,
+        sprValue: el.sprInput.value || "",
+      }));
+    } catch (e) {}
+  }
+
+  function saveMarks() {
+    try { localStorage.setItem("sat-marks", JSON.stringify(state.marked)); } catch (e) {}
+  }
+  function saveStruck() {
+    try { localStorage.setItem("sat-struck", JSON.stringify(state.struck)); } catch (e) {}
+  }
+
+  function loadPersisted(key, fallback) {
+    try { return JSON.parse(localStorage.getItem(key) || "null") || fallback; } catch (e) { return fallback; }
+  }
+
+  // Rebuild an interrupted practice session from its snapshot, if possible.
+  function restoreSession() {
+    var snap = loadPersisted("sat-session", null);
+    if (!snap || !snap.setIds || !snap.setIds.length) return false;
+    var byId = {};
+    state.all.forEach(function (q) { byId[q.id] = q; });
+    var set = snap.setIds.map(function (id) { return byId[id]; }).filter(Boolean);
+    if (!set.length) return false;
+    state.set = set;
+    state.setLabel = snap.label || "Practice";
+    state.index = Math.min(Math.max(0, snap.index || 0), set.length - 1);
+    state.elimMode = !!snap.elimMode;
+    state.timerHidden = !!snap.timerHidden;
+    el.timerEl.classList.toggle("hidden", state.timerHidden);
+    el.timerToggle.textContent = state.timerHidden ? "Show" : "Hide";
+    state.pendingRestore = {
+      checked: !!snap.checked,
+      selectedLetter: snap.selectedLetter || null,
+      sprValue: snap.sprValue || "",
+    };
+    state.view = "practice";
+    startTimer(snap.elapsed || 0);
+    return true;
+  }
+
+  // Reapply the in-question state (selection / checked) after a resume.
+  function applyPendingRestore() {
+    var pr = state.pendingRestore;
+    if (!pr) return;
+    state.pendingRestore = null;
+    var q = currentQ();
+    if (!q) return;
+    if (q.type === "mcq" && pr.selectedLetter) selectOption(pr.selectedLetter);
+    if (q.type === "spr" && pr.sprValue) el.sprInput.value = pr.sprValue;
+    if (pr.checked) checkAnswer();
   }
 
   /* ---------------- practice flow ---------------- */
@@ -331,10 +405,8 @@
     state.set = set;
     state.index = 0;
     state.setLabel = label;
-    state.marked = {};
-    state.struck = {};
     state.view = "practice";
-    startTimer();
+    startTimer(0);
     render();
   }
 
@@ -342,6 +414,7 @@
     stopTimer();
     closeNavigator();
     state.view = "topics";
+    saveSession(); // clears the snapshot
     render();
   }
 
@@ -379,6 +452,8 @@
         var s = state.struck[q.id] = state.struck[q.id] || {};
         s[opt.letter] = !s[opt.letter];
         if (s[opt.letter] && state.selectedLetter === opt.letter) state.selectedLetter = null;
+        saveStruck();
+        saveSession();
         renderOptions(q);
       });
       row.appendChild(elim);
@@ -392,8 +467,9 @@
     var q = currentQ();
     if (!q || q.type !== "mcq") return;
     var struck = state.struck[q.id] || {};
-    if (struck[letterWanted]) struck[letterWanted] = false; // selecting un-strikes
+    if (struck[letterWanted]) { struck[letterWanted] = false; saveStruck(); } // selecting un-strikes
     state.selectedLetter = letterWanted;
+    saveSession();
     renderOptions(q);
   }
 
@@ -443,6 +519,7 @@
     el.next.disabled = state.index >= state.set.length - 1;
     renderNavigator();
     window.scrollTo({ top: 0 });
+    saveSession();
   }
 
   /* ---------------- question navigator ---------------- */
@@ -536,6 +613,7 @@
       console.error("Failed to save progress:", e);
     });
     renderNavigator();
+    saveSession();
     el.next.focus();
   }
 
@@ -728,14 +806,17 @@
   el.markBtn.addEventListener("click", function () {
     var q = currentQ();
     if (!q) return;
-    state.marked[q.id] = !state.marked[q.id];
+    if (state.marked[q.id]) delete state.marked[q.id];
+    else state.marked[q.id] = true;
     el.markBtn.classList.toggle("active", !!state.marked[q.id]);
+    saveMarks();
     renderNavigator();
   });
 
   el.elimBtn.addEventListener("click", function () {
     state.elimMode = !state.elimMode;
     el.elimBtn.classList.toggle("active", state.elimMode);
+    saveSession();
     var q = currentQ();
     if (q && q.type === "mcq" && !state.checked) renderOptions(q);
   });
@@ -752,7 +833,12 @@
     state.timerHidden = !state.timerHidden;
     el.timerEl.classList.toggle("hidden", state.timerHidden);
     el.timerToggle.textContent = state.timerHidden ? "Show" : "Hide";
+    saveSession();
   });
+
+  el.sprInput.addEventListener("input", function () { saveSession(); });
+
+  window.addEventListener("beforeunload", function () { saveSession(); });
 
   document.addEventListener("keydown", function (e) {
     if (state.view !== "practice") return;
@@ -812,8 +898,16 @@
     Promise.all([dbClear(Q_STORE), dbClear(P_STORE)]).then(function () {
       state.all = [];
       state.progress = {};
+      state.marked = {};
+      state.struck = {};
       state.module = null;
       state.view = "topics";
+      try {
+        localStorage.removeItem("sat-session");
+        localStorage.removeItem("sat-marks");
+        localStorage.removeItem("sat-struck");
+        localStorage.removeItem("sat-preload-stamp");
+      } catch (e) {}
       render();
     });
   });
@@ -855,7 +949,11 @@
     state.module = modulesPresent()[0] || null;
     loadPrefs();
     if (modulesPresent().indexOf(state.module) === -1) state.module = modulesPresent()[0] || null;
+    state.marked = loadPersisted("sat-marks", {});
+    state.struck = loadPersisted("sat-struck", {});
+    restoreSession(); // resume mid-practice if a snapshot exists
     render();
+    applyPendingRestore();
   }).catch(function (e) {
     el.emptyState.classList.remove("hidden");
     console.error("Failed to open IndexedDB:", e);
