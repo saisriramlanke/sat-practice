@@ -1,6 +1,10 @@
 /*
  * app.js — UI + IndexedDB persistence for the SAT practice viewer.
  * Depends on lib.js (window.SatLib).
+ *
+ * Layout modeled on question-bank sites like OnePrep: a per-module landing
+ * page listing domains and skills with progress + accuracy, and a separate
+ * practice view showing one question at a time.
  */
 
 (function () {
@@ -11,17 +15,21 @@
   /* ---------------- IndexedDB ---------------- */
 
   var DB_NAME = "sat-practice";
-  var STORE = "questions";
+  var Q_STORE = "questions";
+  var P_STORE = "progress"; // { id, correct: true|false|null, ts }
   var dbPromise = null;
 
   function openDb() {
     if (dbPromise) return dbPromise;
     dbPromise = new Promise(function (resolve, reject) {
-      var req = indexedDB.open(DB_NAME, 1);
+      var req = indexedDB.open(DB_NAME, 2);
       req.onupgradeneeded = function () {
         var db = req.result;
-        if (!db.objectStoreNames.contains(STORE)) {
-          db.createObjectStore(STORE, { keyPath: "id" });
+        if (!db.objectStoreNames.contains(Q_STORE)) {
+          db.createObjectStore(Q_STORE, { keyPath: "id" });
+        }
+        if (!db.objectStoreNames.contains(P_STORE)) {
+          db.createObjectStore(P_STORE, { keyPath: "id" });
         }
       };
       req.onsuccess = function () { resolve(req.result); };
@@ -30,34 +38,34 @@
     return dbPromise;
   }
 
-  function dbGetAll() {
+  function dbGetAll(store) {
     return openDb().then(function (db) {
       return new Promise(function (resolve, reject) {
-        var tx = db.transaction(STORE, "readonly");
-        var req = tx.objectStore(STORE).getAll();
+        var tx = db.transaction(store, "readonly");
+        var req = tx.objectStore(store).getAll();
         req.onsuccess = function () { resolve(req.result || []); };
         req.onerror = function () { reject(req.error); };
       });
     });
   }
 
-  function dbPutAll(questions) {
+  function dbPutAll(store, rows) {
     return openDb().then(function (db) {
       return new Promise(function (resolve, reject) {
-        var tx = db.transaction(STORE, "readwrite");
-        var store = tx.objectStore(STORE);
-        questions.forEach(function (q) { store.put(q); });
+        var tx = db.transaction(store, "readwrite");
+        var s = tx.objectStore(store);
+        rows.forEach(function (r) { s.put(r); });
         tx.oncomplete = function () { resolve(); };
         tx.onerror = function () { reject(tx.error); };
       });
     });
   }
 
-  function dbClear() {
+  function dbClear(store) {
     return openDb().then(function (db) {
       return new Promise(function (resolve, reject) {
-        var tx = db.transaction(STORE, "readwrite");
-        tx.objectStore(STORE).clear();
+        var tx = db.transaction(store, "readwrite");
+        tx.objectStore(store).clear();
         tx.oncomplete = function () { resolve(); };
         tx.onerror = function () { reject(tx.error); };
       });
@@ -66,14 +74,20 @@
 
   /* ---------------- state ---------------- */
 
+  var MODULE_ORDER = ["Reading & Writing", "Math"];
+
   var state = {
-    all: [],            // every question, sorted
-    filtered: [],       // current filtered set
-    index: 0,           // position in filtered
-    filter: { module: null, domain: null, skill: null }, // sidebar selection
-    difficulties: {},   // e.g. {E:true} — empty means all
+    all: [],              // every question, sorted
+    progress: {},         // id -> { correct: true|false|null }
+    module: null,         // current module tab
+    difficulties: {},     // {E:true,...} — empty means all
+    statusFilter: "all",  // all | unanswered | answered
+    view: "topics",       // topics | practice
+    set: [],              // current practice set
+    index: 0,
     selectedLetter: null,
     checked: false,
+    setLabel: "",         // breadcrumb prefix for the practice set
   };
 
   /* ---------------- elements ---------------- */
@@ -81,10 +95,14 @@
   function $(id) { return document.getElementById(id); }
 
   var el = {
-    tree: $("tree"),
-    totalCount: $("total-count"),
+    moduleTabs: $("module-tabs"),
+    topicsView: $("topics-view"),
+    moduleTitle: $("module-title"),
+    practiceAllSub: $("practice-all-sub"),
+    domainList: $("domain-list"),
+    statusFilter: $("status-filter"),
     emptyState: $("empty-state"),
-    questionView: $("question-view"),
+    practiceView: $("practice-view"),
     breadcrumb: $("q-breadcrumb"),
     difficulty: $("q-difficulty"),
     position: $("q-position"),
@@ -108,182 +126,185 @@
     importRun: $("btn-import-run"),
   };
 
-  /* ---------------- filtering ---------------- */
+  /* ---------------- helpers ---------------- */
 
-  function applyFilter() {
-    var f = state.filter;
+  function modulesPresent() {
+    var seen = {};
+    state.all.forEach(function (q) { seen[q.module] = true; });
+    var known = MODULE_ORDER.filter(function (m) { return seen[m]; });
+    var extra = Object.keys(seen).filter(function (m) { return MODULE_ORDER.indexOf(m) === -1; }).sort();
+    return known.concat(extra);
+  }
+
+  function questionMatchesFilters(q) {
     var diffs = Object.keys(state.difficulties).filter(function (d) { return state.difficulties[d]; });
-    state.filtered = state.all.filter(function (q) {
-      if (f.module && q.module !== f.module) return false;
-      if (f.domain && q.domain !== f.domain) return false;
-      if (f.skill && q.skill !== f.skill) return false;
-      if (diffs.length && diffs.indexOf(q.difficulty) === -1) return false;
-      return true;
-    });
-    if (state.index >= state.filtered.length) state.index = 0;
+    if (diffs.length && diffs.indexOf(q.difficulty) === -1) return false;
+    var answered = state.progress[q.id] !== undefined;
+    if (state.statusFilter === "unanswered" && answered) return false;
+    if (state.statusFilter === "answered" && !answered) return false;
+    return true;
   }
 
-  /* ---------------- sidebar tree ---------------- */
-
-  var expanded = {}; // "module" and "module||domain" keys
-
-  function treeRow(depth, label, count, opts) {
-    var row = document.createElement("div");
-    row.className = "tree-row" + (opts.selected ? " selected" : "");
-    var caret = document.createElement("span");
-    caret.className = "caret";
-    caret.textContent = opts.hasChildren ? (opts.open ? "▾" : "▸") : "";
-    var lab = document.createElement("span");
-    lab.className = "label";
-    lab.textContent = label;
-    lab.title = label;
-    var cnt = document.createElement("span");
-    cnt.className = "count";
-    cnt.textContent = count;
-    row.appendChild(caret);
-    row.appendChild(lab);
-    row.appendChild(cnt);
-    row.addEventListener("click", opts.onclick);
-    return row;
-  }
-
-  function renderTree() {
-    var tree = L.buildTree(state.all);
-    el.tree.innerHTML = "";
-    var f = state.filter;
-
-    // "All questions" row
-    el.tree.appendChild(
-      treeRow(0, "All questions", state.all.length, {
-        selected: !f.module,
-        hasChildren: false,
-        onclick: function () {
-          state.filter = { module: null, domain: null, skill: null };
-          state.index = 0;
-          refresh();
-        },
-      })
-    );
-
-    Object.keys(tree).sort().forEach(function (modName) {
-      var mod = tree[modName];
-      var modKey = modName;
-      var modOpen = !!expanded[modKey];
-      var modNode = document.createElement("div");
-      modNode.className = "tree-node";
-      modNode.appendChild(
-        treeRow(0, modName, mod.count, {
-          selected: f.module === modName && !f.domain,
-          hasChildren: true,
-          open: modOpen,
-          onclick: function () {
-            expanded[modKey] = !modOpen || !(f.module === modName && !f.domain) ? true : !modOpen;
-            if (f.module === modName && !f.domain) expanded[modKey] = !modOpen;
-            state.filter = { module: modName, domain: null, skill: null };
-            state.index = 0;
-            refresh();
-          },
-        })
-      );
-
-      if (modOpen) {
-        var domWrap = document.createElement("div");
-        domWrap.className = "tree-children";
-        Object.keys(mod.domains).sort().forEach(function (domName) {
-          var dom = mod.domains[domName];
-          var domKey = modName + "||" + domName;
-          var domOpen = !!expanded[domKey];
-          domWrap.appendChild(
-            treeRow(1, domName, dom.count, {
-              selected: f.module === modName && f.domain === domName && !f.skill,
-              hasChildren: true,
-              open: domOpen,
-              onclick: function () {
-                if (f.module === modName && f.domain === domName && !f.skill) {
-                  expanded[domKey] = !domOpen;
-                } else {
-                  expanded[domKey] = true;
-                }
-                state.filter = { module: modName, domain: domName, skill: null };
-                state.index = 0;
-                refresh();
-              },
-            })
-          );
-          if (domOpen) {
-            var skWrap = document.createElement("div");
-            skWrap.className = "tree-children";
-            Object.keys(dom.skills).sort().forEach(function (skName) {
-              var sk = dom.skills[skName];
-              skWrap.appendChild(
-                treeRow(2, skName, sk.count, {
-                  selected: f.module === modName && f.domain === domName && f.skill === skName,
-                  hasChildren: false,
-                  onclick: function () {
-                    state.filter = { module: modName, domain: domName, skill: skName };
-                    state.index = 0;
-                    refresh();
-                  },
-                })
-              );
-            });
-            domWrap.appendChild(skWrap);
-          }
-        });
-        modNode.appendChild(domWrap);
+  // Stats over a list of questions (unfiltered totals, like OnePrep's rows).
+  function statsFor(list) {
+    var total = list.length, answered = 0, graded = 0, correct = 0;
+    list.forEach(function (q) {
+      var p = state.progress[q.id];
+      if (p !== undefined) {
+        answered++;
+        if (p.correct === true) { graded++; correct++; }
+        else if (p.correct === false) { graded++; }
+        // correct === null: answered but ungradable (no answer key)
       }
-      el.tree.appendChild(modNode);
     });
-
-    el.totalCount.textContent = state.all.length + " question" + (state.all.length === 1 ? "" : "s");
+    return {
+      total: total,
+      answered: answered,
+      accuracy: graded ? Math.round((correct / graded) * 100) : null,
+    };
   }
 
-  /* ---------------- question rendering ---------------- */
+  function accuracyClass(pct) {
+    if (pct === null) return "";
+    if (pct >= 66) return "acc-good";
+    if (pct >= 40) return "acc-mid";
+    return "acc-bad";
+  }
 
-  function setHtml(node, html) {
-    node.innerHTML = L.sanitizeHtml(html || "");
+  /* ---------------- topbar / module tabs ---------------- */
+
+  function renderTabs() {
+    var mods = modulesPresent();
+    el.moduleTabs.innerHTML = "";
+    mods.forEach(function (m) {
+      var b = document.createElement("button");
+      b.className = "tab" + (m === state.module ? " active" : "");
+      b.textContent = m;
+      b.addEventListener("click", function () {
+        state.module = m;
+        state.view = "topics";
+        render();
+      });
+      el.moduleTabs.appendChild(b);
+    });
+  }
+
+  /* ---------------- topics view ---------------- */
+
+  function renderTopics() {
+    var moduleQs = state.all.filter(function (q) { return q.module === state.module; });
+    el.moduleTitle.textContent = state.module || "";
+
+    // Domain -> skill grouping (insertion order follows sorted question list)
+    var domains = {}; // name -> { skills: { name -> [q] } }
+    var domainOrder = [];
+    moduleQs.forEach(function (q) {
+      if (!domains[q.domain]) { domains[q.domain] = { order: [], skills: {} }; domainOrder.push(q.domain); }
+      var d = domains[q.domain];
+      if (!d.skills[q.skill]) { d.skills[q.skill] = []; d.order.push(q.skill); }
+      d.skills[q.skill].push(q);
+    });
+
+    var skillCount = 0;
+    domainOrder.forEach(function (dn) { skillCount += domains[dn].order.length; });
+    el.practiceAllSub.textContent =
+      "Start practicing all " + skillCount + " skill" + (skillCount === 1 ? "" : "s") +
+      " in " + (state.module || "this module") + ".";
+
+    el.domainList.innerHTML = "";
+    domainOrder.forEach(function (domainName) {
+      var d = domains[domainName];
+
+      var section = document.createElement("section");
+      section.className = "domain-section";
+
+      var h = document.createElement("h2");
+      h.className = "domain-title";
+      h.textContent = domainName;
+      section.appendChild(h);
+
+      d.order.forEach(function (skillName) {
+        var qs = d.skills[skillName];
+        var st = statsFor(qs);
+
+        var row = document.createElement("button");
+        row.className = "skill-row";
+
+        var name = document.createElement("span");
+        name.className = "col-topic skill-name";
+        name.textContent = skillName;
+
+        var prog = document.createElement("span");
+        prog.className = "col-progress";
+        var bar = document.createElement("span");
+        bar.className = "bar";
+        var fill = document.createElement("span");
+        fill.className = "bar-fill";
+        fill.style.width = (st.total ? Math.max(2, Math.round((st.answered / st.total) * 100)) : 0) + "%";
+        if (!st.answered) fill.style.width = "0%";
+        bar.appendChild(fill);
+        var frac = document.createElement("span");
+        frac.className = "frac";
+        frac.textContent = st.answered + "/" + st.total;
+        prog.appendChild(bar);
+        prog.appendChild(frac);
+
+        var acc = document.createElement("span");
+        acc.className = "col-accuracy " + accuracyClass(st.accuracy);
+        if (st.accuracy !== null) {
+          var dot = document.createElement("span");
+          dot.className = "acc-dot";
+          acc.appendChild(dot);
+          acc.appendChild(document.createTextNode(st.accuracy + " %"));
+        } else {
+          acc.textContent = "–";
+        }
+
+        row.appendChild(name);
+        row.appendChild(prog);
+        row.appendChild(acc);
+        row.addEventListener("click", function () {
+          startPractice(qs, state.module + " › " + domainName);
+        });
+        section.appendChild(row);
+      });
+
+      el.domainList.appendChild(section);
+    });
+  }
+
+  /* ---------------- practice flow ---------------- */
+
+  function startPractice(pool, label) {
+    var set = L.sortQuestions(pool.filter(questionMatchesFilters));
+    if (!set.length) {
+      alert("No questions match the current difficulty/status filters.");
+      return;
+    }
+    state.set = set;
+    state.index = 0;
+    state.setLabel = label;
+    state.view = "practice";
+    render();
   }
 
   function renderQuestion() {
-    if (!state.all.length) {
-      el.emptyState.classList.remove("hidden");
-      el.questionView.classList.add("hidden");
-      return;
-    }
-    el.emptyState.classList.add("hidden");
-    el.questionView.classList.remove("hidden");
-
-    if (!state.filtered.length) {
-      el.breadcrumb.textContent = "No questions match the current filters.";
-      el.difficulty.textContent = "";
-      el.position.textContent = "0 / 0";
-      el.stimulus.classList.add("hidden");
-      el.stem.innerHTML = "";
-      el.options.classList.add("hidden");
-      el.spr.classList.add("hidden");
-      el.check.disabled = true;
-      el.result.classList.add("hidden");
-      el.prev.disabled = true;
-      el.next.disabled = true;
-      return;
-    }
-
-    var q = state.filtered[state.index];
+    var q = state.set[state.index];
     state.selectedLetter = null;
     state.checked = false;
 
     el.breadcrumb.textContent = q.module + " › " + q.domain + " › " + q.skill;
     el.difficulty.textContent = L.difficultyLabel(q.difficulty);
-    el.position.textContent = state.index + 1 + " / " + state.filtered.length;
+    el.position.textContent = state.index + 1 + " / " + state.set.length;
 
     if (q.stimulus && q.stimulus.trim()) {
-      setHtml(el.stimulus, q.stimulus);
+      el.stimulus.innerHTML = L.sanitizeHtml(q.stimulus);
       el.stimulus.classList.remove("hidden");
     } else {
       el.stimulus.classList.add("hidden");
       el.stimulus.innerHTML = "";
     }
-    setHtml(el.stem, q.stem);
+    el.stem.innerHTML = L.sanitizeHtml(q.stem);
 
     el.result.classList.add("hidden");
     el.rationaleWrap.classList.add("hidden");
@@ -303,7 +324,7 @@
         letter.textContent = opt.letter;
         var body = document.createElement("span");
         body.className = "opt-body";
-        setHtml(body, opt.html);
+        body.innerHTML = L.sanitizeHtml(opt.html);
         btn.appendChild(letter);
         btn.appendChild(body);
         btn.addEventListener("click", function () {
@@ -324,20 +345,17 @@
     }
 
     el.prev.disabled = state.index === 0;
-    el.next.disabled = state.index >= state.filtered.length - 1;
+    el.next.disabled = state.index >= state.set.length - 1;
   }
 
-  /* ---------------- checking ---------------- */
-
   function checkAnswer() {
-    if (state.checked || !state.filtered.length) return;
-    var q = state.filtered[state.index];
+    if (state.checked || !state.set.length) return;
+    var q = state.set[state.index];
     var verdict;
 
     if (q.type === "mcq") {
-      if (!state.selectedLetter) return; // nothing selected yet
+      if (!state.selectedLetter) return;
       verdict = L.gradeMcq(state.selectedLetter, q.correct);
-      // reveal highlighting
       Array.prototype.forEach.call(el.options.children, function (c) {
         var letter = c.dataset.letter;
         c.disabled = true;
@@ -364,33 +382,33 @@
       }
     } else if (verdict === false) {
       el.resultBanner.className = "result-banner incorrect";
-      if (q.type === "spr" && q.correct) {
-        el.resultBanner.textContent = "Incorrect — correct answer: " + q.correct.join(", ");
-      } else if (q.correct) {
-        el.resultBanner.textContent = "Incorrect — correct answer: " + q.correct.join(", ");
-      } else {
-        el.resultBanner.textContent = "Incorrect";
-      }
+      el.resultBanner.textContent = q.correct
+        ? "Incorrect — correct answer: " + q.correct.join(", ")
+        : "Incorrect";
     } else {
-      // verdict === null: no structured answer key
       el.resultBanner.className = "result-banner nokey";
       el.resultBanner.textContent = "No structured answer key for this question — see the explanation below.";
     }
 
     if (q.rationale && q.rationale.trim()) {
-      setHtml(el.rationale, q.rationale);
+      el.rationale.innerHTML = L.sanitizeHtml(q.rationale);
       el.rationaleWrap.classList.remove("hidden");
     }
-  }
 
-  /* ---------------- navigation ---------------- */
+    // Record the attempt (latest attempt wins).
+    var rec = { id: q.id, correct: verdict, ts: Date.now() };
+    state.progress[q.id] = rec;
+    dbPutAll(P_STORE, [rec]).catch(function (e) {
+      console.error("Failed to save progress:", e);
+    });
+  }
 
   function go(delta) {
     var ni = state.index + delta;
-    if (ni < 0 || ni >= state.filtered.length) return;
+    if (ni < 0 || ni >= state.set.length) return;
     state.index = ni;
     renderQuestion();
-    el.questionView.scrollIntoView({ block: "start" });
+    window.scrollTo({ top: 0 });
   }
 
   /* ---------------- import ---------------- */
@@ -453,20 +471,21 @@
       return;
     }
 
-    // merge/dedupe against existing set (by id = uId || questionId)
     var byId = {};
     state.all.forEach(function (q) { byId[q.id] = q; });
     var added = 0, updated = 0;
     incoming.forEach(function (q) {
       if (byId[q.id]) updated++; else added++;
-      byId[q.id] = q; // newest import wins
+      byId[q.id] = q;
     });
 
     var merged = Object.keys(byId).map(function (k) { return byId[k]; });
 
-    dbPutAll(incoming).then(function () {
+    dbPutAll(Q_STORE, incoming).then(function () {
       state.all = L.sortQuestions(merged);
-      state.index = 0;
+      if (!state.module || modulesPresent().indexOf(state.module) === -1) {
+        state.module = modulesPresent()[0] || null;
+      }
       var msg = "Imported: " + added + " new, " + updated + " updated";
       if (skipped) msg += ", " + skipped + " unrecognized skipped";
       if (parseErrors) msg += ", " + parseErrors + " file(s) failed to parse";
@@ -474,18 +493,33 @@
       pendingFileTexts = [];
       el.pasteInput.value = "";
       el.fileInput.value = "";
-      refresh();
+      state.view = "topics";
+      render();
     }).catch(function (e) {
       el.importStatus.textContent = "Storage error: " + e;
     });
   }
 
-  /* ---------------- refresh ---------------- */
+  /* ---------------- render root ---------------- */
 
-  function refresh() {
-    applyFilter();
-    renderTree();
-    renderQuestion();
+  function render() {
+    renderTabs();
+    if (!state.all.length) {
+      el.emptyState.classList.remove("hidden");
+      el.topicsView.classList.add("hidden");
+      el.practiceView.classList.add("hidden");
+      return;
+    }
+    el.emptyState.classList.add("hidden");
+    if (state.view === "practice") {
+      el.topicsView.classList.add("hidden");
+      el.practiceView.classList.remove("hidden");
+      renderQuestion();
+    } else {
+      el.practiceView.classList.add("hidden");
+      el.topicsView.classList.remove("hidden");
+      renderTopics();
+    }
   }
 
   /* ---------------- wiring ---------------- */
@@ -518,12 +552,22 @@
   });
   el.prev.addEventListener("click", function () { go(-1); });
   el.next.addEventListener("click", function () { go(1); });
+  $("btn-back").addEventListener("click", function () {
+    state.view = "topics";
+    render();
+  });
 
   document.addEventListener("keydown", function (e) {
+    if (state.view !== "practice") return;
     if (!el.modal.classList.contains("hidden")) return;
     if (e.target === el.sprInput || e.target === el.pasteInput) return;
     if (e.key === "ArrowLeft") go(-1);
     if (e.key === "ArrowRight") go(1);
+  });
+
+  $("btn-practice-all").addEventListener("click", function () {
+    var pool = state.all.filter(function (q) { return q.module === state.module; });
+    startPractice(pool, state.module);
   });
 
   Array.prototype.forEach.call(document.querySelectorAll("#diff-chips .chip"), function (chip) {
@@ -531,29 +575,44 @@
       var d = chip.dataset.diff;
       state.difficulties[d] = !state.difficulties[d];
       chip.classList.toggle("active", state.difficulties[d]);
-      state.index = 0;
-      refresh();
+      render();
+    });
+  });
+
+  el.statusFilter.addEventListener("change", function () {
+    state.statusFilter = el.statusFilter.value;
+    render();
+  });
+
+  $("btn-reset-progress").addEventListener("click", function () {
+    var n = Object.keys(state.progress).length;
+    if (!n) return;
+    if (!confirm("Reset all progress (" + n + " answered questions)? Questions themselves are kept.")) return;
+    dbClear(P_STORE).then(function () {
+      state.progress = {};
+      render();
     });
   });
 
   $("btn-clear").addEventListener("click", function () {
     if (!state.all.length) return;
-    if (!confirm("Delete all " + state.all.length + " imported questions? This cannot be undone.")) return;
-    dbClear().then(function () {
+    if (!confirm("Delete all " + state.all.length + " imported questions and all progress? This cannot be undone.")) return;
+    Promise.all([dbClear(Q_STORE), dbClear(P_STORE)]).then(function () {
       state.all = [];
-      state.filter = { module: null, domain: null, skill: null };
-      state.index = 0;
-      refresh();
+      state.progress = {};
+      state.module = null;
+      state.view = "topics";
+      render();
     });
   });
 
   /* ---------------- init ---------------- */
 
-  dbGetAll().then(function (questions) {
-    state.all = L.sortQuestions(questions);
-    // expand all modules by default
-    Object.keys(L.buildTree(state.all)).forEach(function (m) { expanded[m] = true; });
-    refresh();
+  Promise.all([dbGetAll(Q_STORE), dbGetAll(P_STORE)]).then(function (res) {
+    state.all = L.sortQuestions(res[0]);
+    res[1].forEach(function (p) { state.progress[p.id] = p; });
+    state.module = modulesPresent()[0] || null;
+    render();
   }).catch(function (e) {
     el.emptyState.classList.remove("hidden");
     console.error("Failed to open IndexedDB:", e);

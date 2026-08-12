@@ -9,6 +9,17 @@ just import questions, answer them, check correctness, read the explanation.
 Open `index.html` in any modern browser (Chrome, Edge, Firefox). That's it — no
 server, no build step, no dependencies.
 
+## Layout
+
+Each module (Reading & Writing / Math) gets a landing page listing its domains
+and skills — one row per skill with a progress bar (answered/total) and an
+accuracy percentage, plus a "Practice all topics" card. Clicking a skill starts
+practice on that skill's questions. Difficulty chips and an
+answered/unanswered filter control which questions are included in a practice
+set. Progress and accuracy persist locally; "Reset progress" clears attempts
+without deleting questions. Accuracy counts each question's latest attempt;
+questions with no structured answer key count toward progress but not accuracy.
+
 ## Import questions
 
 Click **Import JSON** and drop/choose/paste JSON exported from the official
@@ -32,9 +43,9 @@ four self-written dummy questions purely to demonstrate the import format.
 
 ## Where the data lives
 
-Imported questions persist in your browser's IndexedDB (origin-scoped, fully
-local). "Delete all questions" in the sidebar footer wipes it. Nothing is ever
-sent anywhere.
+Imported questions and answer history persist in your browser's IndexedDB
+(origin-scoped, fully local). "Delete all questions" wipes everything;
+"Reset progress" wipes only answer history. Nothing is ever sent anywhere.
 
 Note: MathML (`<math>` tags) renders natively in current Chrome/Edge/Firefox.
 Some Question Bank explanations reference images hosted on College Board's CDN;

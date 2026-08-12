@@ -8,71 +8,99 @@
 </head>
 <body>
   <div id="app">
-    <aside id="sidebar">
-      <div class="sidebar-header">
-        <h1>SAT Practice</h1>
+    <header id="topbar">
+      <div class="topbar-left">
+        <span class="brand">SAT Practice</span>
+        <nav id="module-tabs" class="module-tabs"></nav>
+      </div>
+      <div class="topbar-right">
         <button id="btn-import" class="btn btn-primary btn-sm">Import JSON</button>
       </div>
-      <div class="sidebar-filters">
-        <span class="filter-label">Difficulty</span>
+    </header>
+
+    <!-- ============ topics (landing) view ============ -->
+    <main id="topics-view" class="container hidden">
+      <h1 id="module-title"></h1>
+
+      <div class="toolbar">
         <div class="diff-chips" id="diff-chips">
           <button class="chip" data-diff="E">Easy</button>
           <button class="chip" data-diff="M">Medium</button>
           <button class="chip" data-diff="H">Hard</button>
         </div>
-      </div>
-      <nav id="tree"></nav>
-      <div class="sidebar-footer">
-        <span id="total-count"></span>
+        <select id="status-filter" class="select">
+          <option value="all">All questions</option>
+          <option value="unanswered">Unanswered only</option>
+          <option value="answered">Answered only</option>
+        </select>
+        <span class="toolbar-spacer"></span>
+        <button id="btn-reset-progress" class="btn-link danger">Reset progress</button>
         <button id="btn-clear" class="btn-link danger">Delete all questions</button>
       </div>
-    </aside>
 
-    <main id="main">
-      <div id="empty-state" class="empty-state hidden">
-        <h2>No questions loaded</h2>
-        <p>Import a JSON export from the College Board Question Bank to get started.</p>
-        <button id="btn-import-empty" class="btn btn-primary">Import JSON</button>
+      <div class="practice-all-card">
+        <div>
+          <div class="pa-title">Practice all topics</div>
+          <div class="pa-sub" id="practice-all-sub"></div>
+        </div>
+        <button id="btn-practice-all" class="btn">Start practice</button>
       </div>
 
-      <div id="question-view" class="hidden">
-        <header class="q-header">
-          <div class="q-meta">
-            <span id="q-breadcrumb"></span>
-            <span id="q-difficulty" class="diff-badge"></span>
-          </div>
-          <div class="q-nav">
-            <button id="btn-prev" class="btn btn-sm">&#8592; Previous</button>
-            <span id="q-position"></span>
-            <button id="btn-next" class="btn btn-sm">Next &#8594;</button>
-          </div>
-        </header>
-
-        <article class="q-body">
-          <div id="q-stimulus" class="stimulus hidden"></div>
-          <div id="q-stem" class="stem"></div>
-
-          <div id="q-options" class="options hidden"></div>
-
-          <div id="q-spr" class="spr hidden">
-            <label for="spr-input" class="spr-label">Enter your answer</label>
-            <input id="spr-input" type="text" autocomplete="off" spellcheck="false"
-                   placeholder="e.g. 3/2 or 1.5" />
-          </div>
-
-          <div class="check-row">
-            <button id="btn-check" class="btn btn-primary">Check Answer</button>
-          </div>
-
-          <div id="result" class="result hidden">
-            <div id="result-banner" class="result-banner"></div>
-            <div id="rationale-wrap" class="rationale hidden">
-              <h3>Explanation</h3>
-              <div id="rationale"></div>
-            </div>
-          </div>
-        </article>
+      <div class="list-header">
+        <span class="col-topic">Topic</span>
+        <span class="col-progress">Progress</span>
+        <span class="col-accuracy">Accuracy</span>
       </div>
+
+      <div id="domain-list"></div>
+    </main>
+
+    <!-- ============ empty state ============ -->
+    <main id="empty-state" class="container empty-state hidden">
+      <h2>No questions loaded</h2>
+      <p>Import a JSON export from the College Board Question Bank to get started.</p>
+      <button id="btn-import-empty" class="btn btn-primary">Import JSON</button>
+    </main>
+
+    <!-- ============ practice view ============ -->
+    <main id="practice-view" class="container hidden">
+      <header class="q-header">
+        <button id="btn-back" class="btn btn-sm">&#8592; Back to topics</button>
+        <div class="q-meta">
+          <span id="q-breadcrumb"></span>
+          <span id="q-difficulty" class="diff-badge"></span>
+        </div>
+        <div class="q-nav">
+          <button id="btn-prev" class="btn btn-sm">&#8592; Previous</button>
+          <span id="q-position"></span>
+          <button id="btn-next" class="btn btn-sm">Next &#8594;</button>
+        </div>
+      </header>
+
+      <article class="q-body">
+        <div id="q-stimulus" class="stimulus hidden"></div>
+        <div id="q-stem" class="stem"></div>
+
+        <div id="q-options" class="options hidden"></div>
+
+        <div id="q-spr" class="spr hidden">
+          <label for="spr-input" class="spr-label">Enter your answer</label>
+          <input id="spr-input" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="e.g. 3/2 or 1.5" />
+        </div>
+
+        <div class="check-row">
+          <button id="btn-check" class="btn btn-primary">Check Answer</button>
+        </div>
+
+        <div id="result" class="result hidden">
+          <div id="result-banner" class="result-banner"></div>
+          <div id="rationale-wrap" class="rationale hidden">
+            <h3>Explanation</h3>
+            <div id="rationale"></div>
+          </div>
+        </div>
+      </article>
     </main>
   </div>
 
