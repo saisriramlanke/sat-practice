@@ -1,0 +1,83 @@
+[
+  {
+    "uId": "00000000-0000-0000-0000-000000000001",
+    "questionId": "sample01",
+    "skill_cd": "H.C.",
+    "skill_desc": "Linear equations in two variables",
+    "primary_class_cd": "H",
+    "primary_class_cd_desc": "Algebra",
+    "difficulty": "E",
+    "module": "math",
+    "content": {
+      "origin": "manifold",
+      "type": "mcq",
+      "stem": "<p><em>Sample question (not College Board content).</em> If <math><mrow><mn>2</mn><mi>x</mi><mo>+</mo><mn>3</mn><mo>=</mo><mn>11</mn></mrow></math>, what is the value of <math><mi>x</mi></math>?</p>",
+      "answerOptions": [
+        { "id": "s1-a", "content": "<p>2</p>" },
+        { "id": "s1-b", "content": "<p>3</p>" },
+        { "id": "s1-c", "content": "<p>4</p>" },
+        { "id": "s1-d", "content": "<p>7</p>" }
+      ],
+      "correct_answer": ["C"],
+      "rationale": "<p>Subtracting 3 from both sides gives 2x = 8, so x = 4. Choice C is correct.</p>"
+    }
+  },
+  {
+    "uId": "00000000-0000-0000-0000-000000000002",
+    "questionId": "sample02",
+    "skill_cd": "P.C.",
+    "skill_desc": "Ratios, rates, proportional relationships, and units",
+    "primary_class_cd": "P",
+    "primary_class_cd_desc": "Problem-Solving and Data Analysis",
+    "difficulty": "M",
+    "module": "math",
+    "content": {
+      "origin": "manifold",
+      "type": "spr",
+      "stem": "<p><em>Sample question (not College Board content).</em> A recipe uses 3 cups of flour for every 2 cups of sugar. How many cups of sugar are needed for 9 cups of flour?</p>",
+      "answerOptions": [],
+      "correct_answer": ["6", "6.0"],
+      "rationale": "<p>Set up the proportion 3/2 = 9/x. Cross-multiplying gives 3x = 18, so x = 6.</p>"
+    }
+  },
+  {
+    "questionId": "sample03",
+    "skill_cd": "CID",
+    "skill_desc": "Central Ideas and Details",
+    "primary_class_cd": "INI",
+    "primary_class_cd_desc": "Information and Ideas",
+    "difficulty": "M",
+    "module": "en",
+    "content": {
+      "body": "<div><p><em>Sample passage (not College Board content).</em> The honeybee waggle dance communicates both the direction and the distance of a food source to other members of the hive. The angle of the dance relative to vertical corresponds to the angle of the food source relative to the sun.</p></div>",
+      "prompt": "<p>According to the passage, the waggle dance communicates which of the following?</p>",
+      "answer": {
+        "style": "Multiple Choice",
+        "choices": {
+          "a": { "body": "<p>Only the distance to a food source</p>" },
+          "b": { "body": "<p>Only the direction of a food source</p>" },
+          "c": { "body": "<p>Both the direction and the distance of a food source</p>" },
+          "d": { "body": "<p>The quality of a food source</p>" }
+        },
+        "correct_choice": "c",
+        "rationale": "<p>The first sentence states the dance communicates both direction and distance. Choice C is correct.</p>"
+      }
+    }
+  },
+  {
+    "questionId": "sample04",
+    "skill_cd": "H.E.",
+    "skill_desc": "Linear inequalities in one or two variables",
+    "primary_class_cd": "H",
+    "primary_class_cd_desc": "Algebra",
+    "difficulty": "H",
+    "module": "math",
+    "content": {
+      "prompt": "<p><em>Sample question (not College Board content, demonstrates the no-answer-key edge case).</em> What is one possible value of x that satisfies 2x &gt; 10?</p>",
+      "answer": {
+        "style": "SPR",
+        "rationale": "<p>Any value greater than 5 satisfies the inequality; for example, 6.</p>"
+      }
+    }
+  }
+]
