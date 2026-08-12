@@ -606,11 +606,40 @@
     });
   });
 
+  /* ---------------- preload (optional data/ scripts) ---------------- */
+
+  // If data/preload-*.js files exist they define window.SAT_PRELOAD (raw
+  // question objects). Import anything new once per stamp, so the parse cost
+  // is paid but the normalize/store cost is skipped on subsequent loads.
+  function maybeImportPreload() {
+    var pre = window.SAT_PRELOAD;
+    if (!pre || !pre.length) return Promise.resolve(0);
+    var stamp = String(window.SAT_PRELOAD_STAMP || "n" + pre.length);
+    var seenStamp = null;
+    try { seenStamp = localStorage.getItem("sat-preload-stamp"); } catch (e) {}
+    if (seenStamp === stamp) return Promise.resolve(0);
+    var res = L.normalizeAll(pre);
+    var existing = {};
+    state.all.forEach(function (q) { existing[q.id] = true; });
+    var added = res.questions.filter(function (q) { return !existing[q.id]; }).length;
+    return dbPutAll(Q_STORE, res.questions).then(function () {
+      var byId = {};
+      state.all.forEach(function (q) { byId[q.id] = q; });
+      res.questions.forEach(function (q) { byId[q.id] = q; });
+      state.all = L.sortQuestions(Object.keys(byId).map(function (k) { return byId[k]; }));
+      try { localStorage.setItem("sat-preload-stamp", stamp); } catch (e) {}
+      if (added) console.log("Preload: imported " + added + " new questions.");
+      return added;
+    });
+  }
+
   /* ---------------- init ---------------- */
 
   Promise.all([dbGetAll(Q_STORE), dbGetAll(P_STORE)]).then(function (res) {
     state.all = L.sortQuestions(res[0]);
     res[1].forEach(function (p) { state.progress[p.id] = p; });
+    return maybeImportPreload();
+  }).then(function () {
     state.module = modulesPresent()[0] || null;
     render();
   }).catch(function (e) {

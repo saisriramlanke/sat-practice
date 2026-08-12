@@ -94,6 +94,10 @@
     return html.replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, "").replace(/<script\b[^>]*\/?>/gi, "");
   }
 
+  function stripTags(html) {
+    return String(html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
+  }
+
   function isModern(raw) {
     var c = raw.content || {};
     if (c.origin === "manifold") return true;
@@ -184,6 +188,13 @@
     if (type === "mcq") {
       if (ans.correct_choice != null && String(ans.correct_choice).trim() !== "") {
         correct = [String(ans.correct_choice).trim().toUpperCase()];
+      } else {
+        // Some legacy items omit correct_choice; the rationale states it
+        // ("Choice B is correct..."). Recover it conservatively.
+        var mMcq = stripTags(ans.rationale || c.rationale).match(
+          /choice\s+([a-j])\s+is\s+(?:correct|the\s+best)/i
+        );
+        if (mMcq) correct = [mMcq[1].toUpperCase()];
       }
     } else {
       // Legacy SPR: structured key may exist under several names — or not at all.
@@ -197,6 +208,19 @@
           keys.push(String(src).trim());
         }
       });
+      if (!keys.length) {
+        // Many legacy SPR rationales open with "The correct answer is 403."
+        // Recover numeric answers only; if the value is an image, no match.
+        var NUM = "-?\\d*\\.?\\d+(?:\\s*\\/\\s*\\d+)?";
+        var mSpr = stripTags(ans.rationale || c.rationale).match(
+          new RegExp("correct answers?\\s+(?:is|are)\\s+(" + NUM + "(?:\\s*(?:,|and|or)\\s*" + NUM + ")*)", "i")
+        );
+        if (mSpr) {
+          keys = mSpr[1].split(/\s*(?:,|and|or)\s*/).map(function (s) {
+            return s.trim();
+          }).filter(Boolean);
+        }
+      }
       keys = keys.filter(function (v, i) {
         return keys.indexOf(v) === i;
       });

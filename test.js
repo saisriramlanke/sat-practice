@@ -147,8 +147,26 @@ assert(lg.rationale.indexOf("It is 5") !== -1, "legacy rationale");
 
 const nk = L.normalizeQuestion(legacySprNoKey);
 eq(nk.type, "spr", "legacy spr type");
-eq(nk.correct, null, "legacy spr with no key -> null");
+eq(nk.correct, null, "legacy spr with no recoverable key -> null");
 assert(nk.rationale.length > 0, "no-key spr keeps rationale");
+
+// rationale-recovery fallbacks
+const mcqNoChoice = JSON.parse(JSON.stringify(legacyMcq));
+delete mcqNoChoice.content.answer.correct_choice;
+mcqNoChoice.content.answer.rationale = "<p>Choice B is correct. Subtracting…</p>";
+eq(L.normalizeQuestion(mcqNoChoice).correct, ["B"], "mcq key recovered from rationale");
+
+const sprRecover = JSON.parse(JSON.stringify(legacySprNoKey));
+sprRecover.content.answer.rationale = "<p>The correct answer is <b>403</b>. For a linear equation…</p>";
+eq(L.normalizeQuestion(sprRecover).correct, ["403"], "spr key recovered from rationale");
+
+const sprMulti = JSON.parse(JSON.stringify(legacySprNoKey));
+sprMulti.content.answer.rationale = "<p>The correct answers are 6 and 7. Either value…</p>";
+eq(L.normalizeQuestion(sprMulti).correct, ["6", "7"], "spr multiple keys recovered");
+
+const sprImgAnswer = JSON.parse(JSON.stringify(legacySprNoKey));
+sprImgAnswer.content.answer.rationale = '<p>The correct answer is <img src="data:image/png;base64,AAA">.</p>';
+eq(L.normalizeQuestion(sprImgAnswer).correct, null, "image-only answer stays null");
 
 /* ---- dedupe ---- */
 
