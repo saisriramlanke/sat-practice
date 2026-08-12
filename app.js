@@ -87,7 +87,12 @@
     index: 0,
     selectedLetter: null,
     checked: false,
-    setLabel: "",         // breadcrumb prefix for the practice set
+    setLabel: "",         // label for the practice set
+    marked: {},           // id -> true (mark for review, session-only)
+    struck: {},           // id -> { letter: true } (eliminated choices, session-only)
+    elimMode: false,      // ABC cross-out mode
+    timer: null,          // { start, intervalId }
+    timerHidden: false,
   };
 
   /* ---------------- elements ---------------- */
@@ -95,6 +100,7 @@
   function $(id) { return document.getElementById(id); }
 
   var el = {
+    topbar: $("topbar"),
     moduleTabs: $("module-tabs"),
     topicsView: $("topics-view"),
     moduleTitle: $("module-title"),
@@ -103,9 +109,22 @@
     statusFilter: $("status-filter"),
     emptyState: $("empty-state"),
     practiceView: $("practice-view"),
-    breadcrumb: $("q-breadcrumb"),
+    setLabel: $("set-label"),
+    timerEl: $("timer"),
+    timerToggle: $("btn-timer-toggle"),
+    qArea: $("q-area"),
+    qLeft: $("q-left"),
+    qNum: $("q-num"),
+    markBtn: $("btn-mark"),
+    elimBtn: $("btn-eliminate"),
+    bbSkill: $("bb-skill"),
+    bbPos: $("bb-pos"),
+    bbTotal: $("bb-total"),
+    navBtn: $("btn-navigator"),
+    navPopup: $("nav-popup"),
+    navPopupTitle: $("nav-popup-title"),
+    navGrid: $("nav-grid"),
     difficulty: $("q-difficulty"),
-    position: $("q-position"),
     stimulus: $("q-stimulus"),
     stem: $("q-stem"),
     options: $("q-options"),
@@ -183,6 +202,7 @@
       b.addEventListener("click", function () {
         state.module = m;
         state.view = "topics";
+        savePrefs();
         render();
       });
       el.moduleTabs.appendChild(b);
@@ -207,9 +227,10 @@
 
     var skillCount = 0;
     domainOrder.forEach(function (dn) { skillCount += domains[dn].order.length; });
+    var modStats = statsFor(moduleQs);
     el.practiceAllSub.textContent =
-      "Start practicing all " + skillCount + " skill" + (skillCount === 1 ? "" : "s") +
-      " in " + (state.module || "this module") + ".";
+      "All " + skillCount + " skills · " + modStats.answered + "/" + modStats.total + " answered" +
+      (modStats.accuracy !== null ? " · " + modStats.accuracy + "% accuracy" : "");
 
     el.domainList.innerHTML = "";
     domainOrder.forEach(function (domainName) {
@@ -273,6 +294,32 @@
     });
   }
 
+  /* ---------------- timer ---------------- */
+
+  function fmtTime(ms) {
+    var s = Math.floor(ms / 1000);
+    var h = Math.floor(s / 3600);
+    var m = Math.floor((s % 3600) / 60);
+    var sec = s % 60;
+    var mm = (m < 10 ? "0" : "") + m;
+    var ss = (sec < 10 ? "0" : "") + sec;
+    return h ? h + ":" + mm + ":" + ss : mm + ":" + ss;
+  }
+
+  function startTimer() {
+    stopTimer();
+    state.timer = { start: Date.now(), intervalId: null };
+    el.timerEl.textContent = "00:00";
+    state.timer.intervalId = setInterval(function () {
+      if (state.timer) el.timerEl.textContent = fmtTime(Date.now() - state.timer.start);
+    }, 1000);
+  }
+
+  function stopTimer() {
+    if (state.timer && state.timer.intervalId) clearInterval(state.timer.intervalId);
+    state.timer = null;
+  }
+
   /* ---------------- practice flow ---------------- */
 
   function startPractice(pool, label) {
@@ -284,58 +331,106 @@
     state.set = set;
     state.index = 0;
     state.setLabel = label;
+    state.marked = {};
+    state.struck = {};
     state.view = "practice";
+    startTimer();
     render();
   }
 
+  function exitPractice() {
+    stopTimer();
+    closeNavigator();
+    state.view = "topics";
+    render();
+  }
+
+  function currentQ() { return state.set[state.index]; }
+
+  function renderOptions(q) {
+    el.options.innerHTML = "";
+    var struck = state.struck[q.id] || {};
+    q.options.forEach(function (opt) {
+      var row = document.createElement("div");
+      row.className = "option-row" + (state.elimMode ? " elim-on" : "");
+
+      var btn = document.createElement("button");
+      btn.className = "option";
+      btn.dataset.letter = opt.letter;
+      if (struck[opt.letter]) btn.classList.add("struck");
+      if (state.selectedLetter === opt.letter) btn.classList.add("selected");
+      var letter = document.createElement("span");
+      letter.className = "opt-letter";
+      letter.textContent = opt.letter;
+      var body = document.createElement("span");
+      body.className = "opt-body";
+      body.innerHTML = L.sanitizeHtml(opt.html);
+      btn.appendChild(letter);
+      btn.appendChild(body);
+      btn.addEventListener("click", function () { selectOption(opt.letter); });
+      row.appendChild(btn);
+
+      var elim = document.createElement("button");
+      elim.className = "elim-btn";
+      elim.title = struck[opt.letter] ? "Undo cross out" : "Cross out choice " + opt.letter;
+      elim.innerHTML = struck[opt.letter] ? "Undo" : "<span class='elim-letter'>" + opt.letter + "</span>";
+      elim.addEventListener("click", function () {
+        if (state.checked) return;
+        var s = state.struck[q.id] = state.struck[q.id] || {};
+        s[opt.letter] = !s[opt.letter];
+        if (s[opt.letter] && state.selectedLetter === opt.letter) state.selectedLetter = null;
+        renderOptions(q);
+      });
+      row.appendChild(elim);
+
+      el.options.appendChild(row);
+    });
+  }
+
+  function selectOption(letterWanted) {
+    if (state.checked) return;
+    var q = currentQ();
+    if (!q || q.type !== "mcq") return;
+    var struck = state.struck[q.id] || {};
+    if (struck[letterWanted]) struck[letterWanted] = false; // selecting un-strikes
+    state.selectedLetter = letterWanted;
+    renderOptions(q);
+  }
+
   function renderQuestion() {
-    var q = state.set[state.index];
+    var q = currentQ();
     state.selectedLetter = null;
     state.checked = false;
 
-    el.breadcrumb.textContent = q.module + " › " + q.domain + " › " + q.skill;
+    el.setLabel.textContent = state.setLabel;
+    el.qNum.textContent = state.index + 1;
+    el.bbPos.textContent = state.index + 1;
+    el.bbTotal.textContent = state.set.length;
+    el.bbSkill.textContent = q.skill;
     el.difficulty.textContent = L.difficultyLabel(q.difficulty);
-    el.position.textContent = state.index + 1 + " / " + state.set.length;
+    el.markBtn.classList.toggle("active", !!state.marked[q.id]);
+    el.elimBtn.classList.toggle("active", state.elimMode);
 
-    if (q.stimulus && q.stimulus.trim()) {
+    var hasStimulus = !!(q.stimulus && q.stimulus.trim());
+    el.qArea.classList.toggle("single", !hasStimulus);
+    if (hasStimulus) {
       el.stimulus.innerHTML = L.sanitizeHtml(q.stimulus);
-      el.stimulus.classList.remove("hidden");
     } else {
-      el.stimulus.classList.add("hidden");
       el.stimulus.innerHTML = "";
     }
+
     el.stem.innerHTML = L.sanitizeHtml(q.stem);
 
     el.result.classList.add("hidden");
     el.rationaleWrap.classList.add("hidden");
     el.resultBanner.className = "result-banner";
     el.check.disabled = false;
+    el.check.textContent = "Check Answer";
 
     if (q.type === "mcq") {
       el.spr.classList.add("hidden");
       el.options.classList.remove("hidden");
-      el.options.innerHTML = "";
-      q.options.forEach(function (opt) {
-        var btn = document.createElement("button");
-        btn.className = "option";
-        btn.dataset.letter = opt.letter;
-        var letter = document.createElement("span");
-        letter.className = "opt-letter";
-        letter.textContent = opt.letter;
-        var body = document.createElement("span");
-        body.className = "opt-body";
-        body.innerHTML = L.sanitizeHtml(opt.html);
-        btn.appendChild(letter);
-        btn.appendChild(body);
-        btn.addEventListener("click", function () {
-          if (state.checked) return;
-          state.selectedLetter = opt.letter;
-          Array.prototype.forEach.call(el.options.children, function (c) {
-            c.classList.toggle("selected", c.dataset.letter === opt.letter);
-          });
-        });
-        el.options.appendChild(btn);
-      });
+      renderOptions(q);
     } else {
       el.options.classList.add("hidden");
       el.options.innerHTML = "";
@@ -346,6 +441,41 @@
 
     el.prev.disabled = state.index === 0;
     el.next.disabled = state.index >= state.set.length - 1;
+    renderNavigator();
+    window.scrollTo({ top: 0 });
+  }
+
+  /* ---------------- question navigator ---------------- */
+
+  function renderNavigator() {
+    if (el.navPopup.classList.contains("hidden")) return;
+    el.navPopupTitle.textContent = state.setLabel;
+    el.navGrid.innerHTML = "";
+    state.set.forEach(function (q, i) {
+      var b = document.createElement("button");
+      b.className = "nav-cell";
+      b.textContent = i + 1;
+      if (state.progress[q.id]) b.classList.add("answered");
+      if (state.marked[q.id]) b.classList.add("marked");
+      if (i === state.index) b.classList.add("current");
+      b.addEventListener("click", function () {
+        state.index = i;
+        renderQuestion();
+      });
+      el.navGrid.appendChild(b);
+    });
+  }
+
+  function openNavigator() {
+    el.navPopup.classList.remove("hidden");
+    renderNavigator();
+  }
+  function closeNavigator() {
+    el.navPopup.classList.add("hidden");
+  }
+  function toggleNavigator() {
+    if (el.navPopup.classList.contains("hidden")) openNavigator();
+    else closeNavigator();
   }
 
   function checkAnswer() {
@@ -356,14 +486,18 @@
     if (q.type === "mcq") {
       if (!state.selectedLetter) return;
       verdict = L.gradeMcq(state.selectedLetter, q.correct);
-      Array.prototype.forEach.call(el.options.children, function (c) {
+      Array.prototype.forEach.call(el.options.querySelectorAll(".option"), function (c) {
         var letter = c.dataset.letter;
         c.disabled = true;
+        c.classList.remove("struck");
         if (q.correct && q.correct.indexOf(letter) !== -1) {
           c.classList.add("reveal-correct");
         } else if (letter === state.selectedLetter && verdict === false) {
           c.classList.add("reveal-wrong");
         }
+      });
+      Array.prototype.forEach.call(el.options.querySelectorAll(".elim-btn"), function (b) {
+        b.disabled = true;
       });
     } else {
       verdict = L.gradeSpr(el.sprInput.value, q.correct);
@@ -401,6 +535,8 @@
     dbPutAll(P_STORE, [rec]).catch(function (e) {
       console.error("Failed to save progress:", e);
     });
+    renderNavigator();
+    el.next.focus();
   }
 
   function go(delta) {
@@ -408,7 +544,6 @@
     if (ni < 0 || ni >= state.set.length) return;
     state.index = ni;
     renderQuestion();
-    window.scrollTo({ top: 0 });
   }
 
   /* ---------------- import ---------------- */
@@ -505,6 +640,7 @@
   function render() {
     renderTabs();
     if (!state.all.length) {
+      el.topbar.classList.remove("hidden");
       el.emptyState.classList.remove("hidden");
       el.topicsView.classList.add("hidden");
       el.practiceView.classList.add("hidden");
@@ -512,14 +648,46 @@
     }
     el.emptyState.classList.add("hidden");
     if (state.view === "practice") {
+      el.topbar.classList.add("hidden"); // full-screen test feel, like Bluebook
       el.topicsView.classList.add("hidden");
       el.practiceView.classList.remove("hidden");
       renderQuestion();
     } else {
+      el.topbar.classList.remove("hidden");
       el.practiceView.classList.add("hidden");
       el.topicsView.classList.remove("hidden");
       renderTopics();
     }
+  }
+
+  /* ---------------- saved UI prefs ---------------- */
+
+  function savePrefs() {
+    try {
+      localStorage.setItem("sat-ui", JSON.stringify({
+        module: state.module,
+        difficulties: state.difficulties,
+        statusFilter: state.statusFilter,
+      }));
+    } catch (e) {}
+  }
+
+  function loadPrefs() {
+    try {
+      var p = JSON.parse(localStorage.getItem("sat-ui") || "null");
+      if (!p) return;
+      if (p.module) state.module = p.module;
+      if (p.difficulties) {
+        state.difficulties = p.difficulties;
+        Array.prototype.forEach.call(document.querySelectorAll("#diff-chips .chip"), function (chip) {
+          chip.classList.toggle("active", !!state.difficulties[chip.dataset.diff]);
+        });
+      }
+      if (p.statusFilter) {
+        state.statusFilter = p.statusFilter;
+        el.statusFilter.value = p.statusFilter;
+      }
+    } catch (e) {}
   }
 
   /* ---------------- wiring ---------------- */
@@ -548,21 +716,63 @@
 
   el.check.addEventListener("click", checkAnswer);
   el.sprInput.addEventListener("keydown", function (e) {
-    if (e.key === "Enter") checkAnswer();
+    if (e.key === "Enter") {
+      if (!state.checked) checkAnswer();
+      else go(1);
+    }
   });
   el.prev.addEventListener("click", function () { go(-1); });
   el.next.addEventListener("click", function () { go(1); });
-  $("btn-back").addEventListener("click", function () {
-    state.view = "topics";
-    render();
+  $("btn-back").addEventListener("click", exitPractice);
+
+  el.markBtn.addEventListener("click", function () {
+    var q = currentQ();
+    if (!q) return;
+    state.marked[q.id] = !state.marked[q.id];
+    el.markBtn.classList.toggle("active", !!state.marked[q.id]);
+    renderNavigator();
+  });
+
+  el.elimBtn.addEventListener("click", function () {
+    state.elimMode = !state.elimMode;
+    el.elimBtn.classList.toggle("active", state.elimMode);
+    var q = currentQ();
+    if (q && q.type === "mcq" && !state.checked) renderOptions(q);
+  });
+
+  el.navBtn.addEventListener("click", toggleNavigator);
+  $("btn-nav-close").addEventListener("click", closeNavigator);
+  document.addEventListener("click", function (e) {
+    if (el.navPopup.classList.contains("hidden")) return;
+    if (el.navPopup.contains(e.target) || el.navBtn.contains(e.target)) return;
+    closeNavigator();
+  });
+
+  el.timerToggle.addEventListener("click", function () {
+    state.timerHidden = !state.timerHidden;
+    el.timerEl.classList.toggle("hidden", state.timerHidden);
+    el.timerToggle.textContent = state.timerHidden ? "Show" : "Hide";
   });
 
   document.addEventListener("keydown", function (e) {
     if (state.view !== "practice") return;
     if (!el.modal.classList.contains("hidden")) return;
+    if (e.key === "Escape") { closeNavigator(); return; }
     if (e.target === el.sprInput || e.target === el.pasteInput) return;
-    if (e.key === "ArrowLeft") go(-1);
-    if (e.key === "ArrowRight") go(1);
+    if (e.key === "ArrowLeft") { go(-1); return; }
+    if (e.key === "ArrowRight") { go(1); return; }
+    if (e.key === "Enter") {
+      e.preventDefault(); // avoid double-firing via native button activation
+      if (state.checked) go(1);
+      else checkAnswer();
+      return;
+    }
+    if (e.key === "m" || e.key === "M") { el.markBtn.click(); return; }
+    var q = currentQ();
+    if (q && q.type === "mcq" && !state.checked && /^[a-jA-J]$/.test(e.key)) {
+      var letter = e.key.toUpperCase();
+      if (q.options.some(function (o) { return o.letter === letter; })) selectOption(letter);
+    }
   });
 
   $("btn-practice-all").addEventListener("click", function () {
@@ -575,12 +785,14 @@
       var d = chip.dataset.diff;
       state.difficulties[d] = !state.difficulties[d];
       chip.classList.toggle("active", state.difficulties[d]);
+      savePrefs();
       render();
     });
   });
 
   el.statusFilter.addEventListener("change", function () {
     state.statusFilter = el.statusFilter.value;
+    savePrefs();
     render();
   });
 
@@ -641,6 +853,8 @@
     return maybeImportPreload();
   }).then(function () {
     state.module = modulesPresent()[0] || null;
+    loadPrefs();
+    if (modulesPresent().indexOf(state.module) === -1) state.module = modulesPresent()[0] || null;
     render();
   }).catch(function (e) {
     el.emptyState.classList.remove("hidden");

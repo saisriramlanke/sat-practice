@@ -16,9 +16,24 @@ and skills — one row per skill with a progress bar (answered/total) and an
 accuracy percentage, plus a "Practice all topics" card. Clicking a skill starts
 practice on that skill's questions. Difficulty chips and an
 answered/unanswered filter control which questions are included in a practice
-set. Progress and accuracy persist locally; "Reset progress" clears attempts
-without deleting questions. Accuracy counts each question's latest attempt;
-questions with no structured answer key count toward progress but not accuracy.
+set (your selections are remembered). Progress and accuracy persist locally;
+"Reset progress" clears attempts without deleting questions. Accuracy counts
+each question's latest attempt; questions with no structured answer key count
+toward progress but not accuracy.
+
+## Practice view (Bluebook-style)
+
+The practice screen mimics the digital SAT: an elapsed timer top-center with a
+Hide toggle, passage/figure on the left with a dashed divider (question-only
+items center in a single column), a question strip with the number badge,
+**Mark for Review**, and the **ABC** choice-eliminator, and a bottom bar with a
+"Question X of Y" navigator popup (answered/marked/current states, click to
+jump). Check Answer stays — this is practice, so you still get the official
+rationale after each question.
+
+Keyboard: `A`–`D` select a choice, `Enter` checks (then advances), `←`/`→`
+navigate, `M` marks for review, `Esc` closes the navigator. Marks and
+cross-outs are per-session; answer history persists.
 
 ## Getting the JSON out of the Question Bank
 

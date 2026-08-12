@@ -62,45 +62,88 @@
       <button id="btn-import-empty" class="btn btn-primary">Import JSON</button>
     </main>
 
-    <!-- ============ practice view ============ -->
-    <main id="practice-view" class="container hidden">
-      <header class="q-header">
-        <button id="btn-back" class="btn btn-sm">&#8592; Back to topics</button>
-        <div class="q-meta">
-          <span id="q-breadcrumb"></span>
-          <span id="q-difficulty" class="diff-badge"></span>
+    <!-- ============ practice view (Bluebook-style) ============ -->
+    <main id="practice-view" class="hidden">
+      <div class="test-topbar">
+        <div class="tt-left">
+          <span id="set-label" class="set-label"></span>
         </div>
-        <div class="q-nav">
-          <button id="btn-prev" class="btn btn-sm">&#8592; Previous</button>
-          <span id="q-position"></span>
-          <button id="btn-next" class="btn btn-sm">Next &#8594;</button>
+        <div class="tt-center">
+          <span id="timer" class="timer">00:00</span>
+          <button id="btn-timer-toggle" class="btn-link timer-toggle">Hide</button>
         </div>
-      </header>
-
-      <article class="q-body">
-        <div id="q-stimulus" class="stimulus hidden"></div>
-        <div id="q-stem" class="stem"></div>
-
-        <div id="q-options" class="options hidden"></div>
-
-        <div id="q-spr" class="spr hidden">
-          <label for="spr-input" class="spr-label">Enter your answer</label>
-          <input id="spr-input" type="text" autocomplete="off" spellcheck="false"
-                 placeholder="e.g. 3/2 or 1.5" />
+        <div class="tt-right">
+          <button id="btn-back" class="btn btn-sm">Exit practice</button>
         </div>
+      </div>
 
-        <div class="check-row">
-          <button id="btn-check" class="btn btn-primary">Check Answer</button>
+      <div id="q-area" class="q-area">
+        <div id="q-left" class="q-col q-col-left">
+          <div id="q-stimulus" class="stimulus-bb"></div>
         </div>
+        <div class="q-col q-col-right">
+          <div class="q-toolbar">
+            <span id="q-num" class="q-num">1</span>
+            <button id="btn-mark" class="mark-btn" title="Mark for review (M)">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h12v18l-6-4-6 4z"/></svg>
+              <span>Mark for Review</span>
+            </button>
+            <span class="q-toolbar-spacer"></span>
+            <span id="q-difficulty" class="diff-badge"></span>
+            <button id="btn-eliminate" class="abc-btn" title="Cross out answer choices">
+              <span class="abc-strike">ABC</span>
+            </button>
+          </div>
 
-        <div id="result" class="result hidden">
-          <div id="result-banner" class="result-banner"></div>
-          <div id="rationale-wrap" class="rationale hidden">
-            <h3>Explanation</h3>
-            <div id="rationale"></div>
+          <div id="q-stem" class="stem"></div>
+
+          <div id="q-options" class="options hidden"></div>
+
+          <div id="q-spr" class="spr hidden">
+            <label for="spr-input" class="spr-label">Enter your answer (integer, decimal, or fraction like 3/2)</label>
+            <input id="spr-input" type="text" autocomplete="off" spellcheck="false" placeholder="Answer" />
+          </div>
+
+          <div class="check-row">
+            <button id="btn-check" class="btn btn-primary">Check Answer</button>
+          </div>
+
+          <div id="result" class="result hidden">
+            <div id="result-banner" class="result-banner"></div>
+            <div id="rationale-wrap" class="rationale hidden">
+              <h3>Explanation</h3>
+              <div id="rationale"></div>
+            </div>
           </div>
         </div>
-      </article>
+      </div>
+
+      <div class="test-bottombar">
+        <div class="bb-left" id="bb-skill"></div>
+        <div class="bb-center">
+          <button id="btn-navigator" class="nav-btn">
+            Question <span id="bb-pos">1</span> of <span id="bb-total">1</span>
+            <span class="nav-caret">&#9650;</span>
+          </button>
+        </div>
+        <div class="bb-right">
+          <button id="btn-prev" class="btn btn-sm">Back</button>
+          <button id="btn-next" class="btn btn-primary btn-sm">Next</button>
+        </div>
+      </div>
+
+      <div id="nav-popup" class="nav-popup hidden">
+        <div class="nav-popup-header">
+          <span id="nav-popup-title"></span>
+          <button id="btn-nav-close" class="btn-link">&#10005;</button>
+        </div>
+        <div class="nav-legend">
+          <span><span class="leg-swatch leg-current"></span> Current</span>
+          <span><span class="leg-swatch leg-answered"></span> Answered</span>
+          <span><span class="leg-swatch leg-marked"></span> Marked</span>
+        </div>
+        <div id="nav-grid" class="nav-grid"></div>
+      </div>
     </main>
   </div>
 
