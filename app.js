@@ -366,22 +366,57 @@
     render();
   }
 
-  function startPlanModule(mod) {
-    var days = computePlan();
-    var todayRow = null;
-    days.forEach(function (r) { if (r.today) todayRow = r; });
-    if (!todayRow) { alert("Today is outside the plan window."); return; }
+  function buildPlanSet(mod, todayRow) {
     var t = todayRow.targets[mod] || { H: 0, M: 0 };
     var needH = Math.max(0, t.H - todayRow.done[mod].H);
     var needM = Math.max(0, t.M - todayRow.done[mod].M);
-    var set = shuffle(unansweredPool(mod, "H")).slice(0, needH)
+    return shuffle(unansweredPool(mod, "H")).slice(0, needH)
       .concat(shuffle(unansweredPool(mod, "M")).slice(0, needM));
+  }
+
+  function todayRowOf(days) {
+    var row = null;
+    (days || computePlan()).forEach(function (r) { if (r.today) row = r; });
+    return row;
+  }
+
+  function dayNumOf(row) {
+    return Math.round((parseDay(row.key) - parseDay(PLAN.start)) / 86400000) + 1;
+  }
+
+  function startPlanModule(mod) {
+    var todayRow = todayRowOf();
+    if (!todayRow) { alert("Today is outside the plan window."); return; }
+    var set = buildPlanSet(mod, todayRow);
     if (!set.length) {
       alert("Today's " + mod + " module is already done (or the pools are empty).");
       return;
     }
-    var dayNum = Math.round((parseDay(todayRow.key) - parseDay(PLAN.start)) / 86400000) + 1;
-    startPracticeExact(set, "Day " + dayNum + " — " + mod);
+    startPracticeExact(set, "Day " + dayNumOf(todayRow) + " — " + mod);
+  }
+
+  // One click = the whole day: remaining R&W dose, then remaining Math dose.
+  function startPlanDay() {
+    var todayRow = todayRowOf();
+    if (!todayRow) { alert("Today is outside the plan window."); return; }
+    var set = buildPlanSet("Reading & Writing", todayRow).concat(buildPlanSet("Math", todayRow));
+    if (!set.length) {
+      alert("Today is already done. See you tomorrow.");
+      return;
+    }
+    startPracticeExact(set, "Day " + dayNumOf(todayRow));
+  }
+
+  // One-shot dry run so the flow can be verified before the plan starts.
+  var TESTRUN_KEY = "sat-testrun-done";
+  function testRunDone() {
+    try { return localStorage.getItem(TESTRUN_KEY) === "1"; } catch (e) { return false; }
+  }
+  function startTestRun() {
+    var set = shuffle(unansweredPool("Reading & Writing", "H")).slice(0, 3)
+      .concat(shuffle(unansweredPool("Math", "H")).slice(0, 2));
+    if (!set.length) { alert("No questions available."); return; }
+    startPracticeExact(set, "Test run");
   }
 
   function renderPlan() {
@@ -408,7 +443,23 @@
     var todayRow = null;
     days.forEach(function (r) { if (r.today) todayRow = r; });
     if (!todayRow) {
-      el.todayCard.textContent = "Today is outside the plan window (Aug 12 – Sep 11).";
+      var msg = document.createElement("div");
+      msg.className = "today-row";
+      var txt = document.createElement("span");
+      txt.style.flex = "1";
+      txt.textContent = parseDay(dateKey(new Date())) < parseDay(PLAN.start)
+        ? "The plan starts tomorrow (Wed, Aug 12). Day 1 will light up here."
+        : "The plan window (Aug 12 – Sep 11) has ended.";
+      msg.appendChild(txt);
+      if (!testRunDone() && parseDay(dateKey(new Date())) < parseDay(PLAN.start)) {
+        var tbtn = document.createElement("button");
+        tbtn.className = "btn btn-primary btn-sm";
+        tbtn.textContent = "Test run (5 questions)";
+        tbtn.title = "A quick dry run of the exact daily flow. This button disappears after you finish it.";
+        tbtn.addEventListener("click", startTestRun);
+        msg.appendChild(tbtn);
+      }
+      el.todayCard.appendChild(msg);
     } else {
       MODULE_ORDER.forEach(function (mod) {
         var t = todayRow.targets[mod] || { H: 0, M: 0 };
@@ -495,14 +546,24 @@
       status.className = "plan-day-status";
       if (row.past || row.today) {
         if (dayMet(row)) { status.textContent = "✓"; status.classList.add("met"); }
-        else if (row.today) { status.textContent = "in progress"; }
-        else { status.textContent = "missed"; status.classList.add("missed"); }
+        else if (!row.today) { status.textContent = "missed"; status.classList.add("missed"); }
       }
 
       d.appendChild(num);
       d.appendChild(date);
       d.appendChild(detail);
       d.appendChild(status);
+
+      // Today's row gets the one-click start for the whole day's dose.
+      if (row.today && !dayMet(row)) {
+        var started = MODULE_ORDER.some(function (mod) { return row.done[mod].total > 0; });
+        var dbtn = document.createElement("button");
+        dbtn.className = "btn btn-primary btn-sm";
+        dbtn.textContent = started ? "Continue" : "Start";
+        dbtn.addEventListener("click", startPlanDay);
+        d.appendChild(dbtn);
+      }
+
       el.planDays.appendChild(d);
     });
   }
@@ -710,6 +771,9 @@
   function exitPractice() {
     stopTimer();
     closeNavigator();
+    if (state.setLabel === "Test run") {
+      try { localStorage.setItem(TESTRUN_KEY, "1"); } catch (e) {} // button disappears for good
+    }
     state.view = "plan"; // home base is the plan
     saveSession(); // clears the snapshot
     render();
