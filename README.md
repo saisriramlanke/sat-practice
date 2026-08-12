@@ -20,6 +20,24 @@ set. Progress and accuracy persist locally; "Reset progress" clears attempts
 without deleting questions. Accuracy counts each question's latest attempt;
 questions with no structured answer key count toward progress but not accuracy.
 
+## Getting the JSON out of the Question Bank
+
+The site's own **Export** button only produces a PDF, and that PDF renders
+every equation as an image — the question text is unrecoverable from it. Don't
+use the PDF. Instead, capture the JSON the site itself loads:
+
+1. Open https://satsuitequestionbank.collegeboard.org and run any search.
+2. Open DevTools (F12) → Console. In Chrome, type `allow pasting` first if
+   prompted.
+3. Paste the contents of `export-from-questionbank.js` and press Enter.
+4. Type `rw` or `math` when asked, wait for it to finish (a few minutes — it
+   fetches each question politely with a delay), and a `.json` file downloads.
+5. Import that file into this app.
+
+The script only calls the same public endpoints the site calls when you browse
+questions; it just saves the responses instead of displaying them. Run one
+module at a time (`rw`, then `math`) and import both files — imports merge.
+
 ## Import questions
 
 Click **Import JSON** and drop/choose/paste JSON exported from the official
@@ -68,4 +86,5 @@ offline).
 | `lib.js` | Pure data logic: payload parsing, format normalization, grading (Node-testable) |
 | `app.js` | UI + IndexedDB persistence |
 | `test.js` | Unit tests — run with `node test.js` |
+| `export-from-questionbank.js` | Paste-in-console script to pull JSON from the official Question Bank |
 | `sample-questions.json` | Self-written dummy questions demonstrating both import formats |
