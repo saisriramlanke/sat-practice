@@ -32,6 +32,22 @@ set (your selections are remembered). Progress and accuracy persist locally;
 each question's latest attempt; questions with no structured answer key count
 toward progress but not accuracy.
 
+## Exam mode (plan modules)
+
+Modules started from the Plan tab run like the real test: a countdown clock
+(32:00 for R&W, 35:00 for Math, red under five minutes), no answer checking —
+select and move on, change answers freely, Back/Next and the navigator work
+throughout. Next on the last question opens **Check Your Work**; submitting
+(or the clock hitting 0:00, which auto-submits) grades the whole module —
+blanks count as wrong — and drops you into **Review**: your score up top,
+question-by-question walkthrough with your answer, the correct answer, and
+the official rationale, navigator colored green/red. R&W modules present
+skills in real test order (vocab → craft → ideas → conventions → rhetoric);
+Math modules use the real ~17 MC + 5 SPR mix, shuffled. Skill and difficulty
+labels are hidden mid-module, shown again in review.
+
+Practice started from the topic pages keeps instant Check Answer feedback.
+
 ## Practice view (Bluebook-style)
 
 The practice screen mimics the digital SAT: an elapsed timer top-center with a

@@ -85,6 +85,15 @@
     quota: { "Reading & Writing": 27, "Math": 22 }, // one real module per day
   };
 
+  // Real digital SAT module shapes (Bluebook)
+  var EXAM = {
+    "Reading & Writing": { size: 27, minutes: 32 },
+    "Math": { size: 22, minutes: 35, spr: 5 }, // ~17 MC + 5 SPR per module
+  };
+
+  // RW modules present skills in this order on the real test
+  var RW_SKILL_ORDER = ["WIC", "TSP", "CTC", "CID", "COE", "INF", "BOU", "FSS", "TRA", "SYN"];
+
   var state = {
     all: [],              // every question, sorted
     progress: {},         // id -> { correct: true|false|null }
@@ -93,6 +102,12 @@
     statusFilter: "all",  // all | unanswered | answered
     view: "plan",         // plan | topics | practice
     daily: {},            // "YYYY-MM-DD" -> { "Module|Diff": count } answered tally
+    mode: "check",        // "check" (instant feedback) | "exam" (deferred, timed)
+    phase: "answering",   // exam only: answering | checkwork | review
+    answers: {},          // exam only: qid -> selected letter / typed string
+    verdicts: {},         // review only: qid -> true|false|null
+    allottedMs: 0,        // exam countdown allotment
+    deadline: 0,          // exam countdown end timestamp
     set: [],              // current practice set
     index: 0,
     selectedLetter: null,
@@ -141,6 +156,12 @@
     navPopup: $("nav-popup"),
     navPopupTitle: $("nav-popup-title"),
     navGrid: $("nav-grid"),
+    backBtn: $("btn-back"),
+    checkRow: $("check-row"),
+    checkwork: $("checkwork"),
+    cwTitle: $("cw-title"),
+    cwSub: $("cw-sub"),
+    cwGrid: $("cw-grid"),
     difficulty: $("q-difficulty"),
     stimulus: $("q-stimulus"),
     stem: $("q-stem"),
@@ -361,6 +382,10 @@
     state.set = set;
     state.index = 0;
     state.setLabel = label;
+    state.mode = "check";
+    state.phase = "answering";
+    state.answers = {};
+    state.verdicts = {};
     state.view = "practice";
     startTimer(0);
     render();
@@ -384,27 +409,105 @@
     return Math.round((parseDay(row.key) - parseDay(PLAN.start)) / 86400000) + 1;
   }
 
-  function startPlanModule(mod) {
-    var todayRow = todayRowOf();
-    if (!todayRow) { alert("Today is outside the plan window."); return; }
-    var set = buildPlanSet(mod, todayRow);
-    if (!set.length) {
-      alert("Today's " + mod + " module is already done (or the pools are empty).");
-      return;
+  // Order a set the way the real test orders it.
+  function orderLikeTestDay(mod, set) {
+    if (mod === "Reading & Writing") {
+      return set.slice().sort(function (a, b) {
+        var ia = RW_SKILL_ORDER.indexOf(a.skillCode);
+        var ib = RW_SKILL_ORDER.indexOf(b.skillCode);
+        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+      });
     }
-    startPracticeExact(set, "Day " + dayNumOf(todayRow) + " — " + mod);
+    return shuffle(set); // Math intersperses domains and SPR
   }
 
-  // One click = the whole day: remaining R&W dose, then remaining Math dose.
+  // Compose a Math chunk with the real MC/SPR ratio (~17 MC + 5 SPR per 22).
+  function composeMathChunk(pool, n) {
+    var sprWant = Math.round(n * EXAM["Math"].spr / EXAM["Math"].size);
+    var sprs = shuffle(pool.filter(function (q) { return q.type === "spr"; })).slice(0, sprWant);
+    var mcqs = shuffle(pool.filter(function (q) { return q.type === "mcq"; })).slice(0, n - sprs.length);
+    var out = mcqs.concat(sprs);
+    if (out.length < n) {
+      var used = {};
+      out.forEach(function (q) { used[q.id] = true; });
+      out = out.concat(shuffle(pool.filter(function (q) { return !used[q.id]; })).slice(0, n - out.length));
+    }
+    return out;
+  }
+
+  // Start a timed exam module for today's remaining plan dose (max one real module).
+  function startExamModule(mod) {
+    var todayRow = todayRowOf();
+    if (!todayRow) { alert("Today is outside the plan window."); return; }
+    var pool = buildPlanSet(mod, todayRow);
+    if (!pool.length) {
+      alert("Today's " + mod + " dose is already done (or the pools are empty).");
+      return;
+    }
+    var size = EXAM[mod].size;
+    var n = Math.min(pool.length, size);
+    var set = mod === "Math" ? composeMathChunk(pool, n) : shuffle(pool).slice(0, n);
+    set = orderLikeTestDay(mod, set);
+
+    state.set = set;
+    state.index = 0;
+    state.setLabel = "Day " + dayNumOf(todayRow) + " — " + (mod === "Math" ? "Math" : "R&W") + " module";
+    state.mode = "exam";
+    state.phase = "answering";
+    state.answers = {};
+    state.verdicts = {};
+    state.allottedMs = Math.ceil((EXAM[mod].minutes * 60000) * (n / size) / 60000) * 60000;
+    state.view = "practice";
+    startCountdown(state.allottedMs);
+    render();
+  }
+
+  // Day button: R&W module first, then Math — like the real test order.
   function startPlanDay() {
     var todayRow = todayRowOf();
     if (!todayRow) { alert("Today is outside the plan window."); return; }
-    var set = buildPlanSet("Reading & Writing", todayRow).concat(buildPlanSet("Math", todayRow));
-    if (!set.length) {
-      alert("Today is already done. See you tomorrow.");
-      return;
-    }
-    startPracticeExact(set, "Day " + dayNumOf(todayRow));
+    var mod = null;
+    if (buildPlanSet("Reading & Writing", todayRow).length) mod = "Reading & Writing";
+    else if (buildPlanSet("Math", todayRow).length) mod = "Math";
+    if (!mod) { alert("Today is already done. See you tomorrow."); return; }
+    startExamModule(mod);
+  }
+
+  /* ---------------- exam grading ---------------- */
+
+  function gradeSet() {
+    state.verdicts = {};
+    var score = 0, gradeable = 0;
+    state.set.forEach(function (q) {
+      var a = state.answers[q.id];
+      var v;
+      if (!q.correct) v = null;
+      else if (q.type === "mcq") v = a ? L.gradeMcq(a, q.correct) : false;
+      else v = a ? L.gradeSpr(a, q.correct) : false;
+      state.verdicts[q.id] = v;
+      if (v !== null) { gradeable++; if (v === true) score++; }
+    });
+    return { score: score, gradeable: gradeable };
+  }
+
+  function submitExam(auto) {
+    if (state.mode !== "exam" || state.phase === "review") return;
+    stopTimer();
+    var res = gradeSet();
+    // Record every question in the module — blanks count as wrong, like test day.
+    var recs = [];
+    state.set.forEach(function (q) {
+      recordDaily(q);
+      var rec = { id: q.id, correct: state.verdicts[q.id], ts: Date.now() };
+      state.progress[q.id] = rec;
+      recs.push(rec);
+    });
+    dbPutAll(P_STORE, recs).catch(function (e) { console.error("Failed to save progress:", e); });
+    state.phase = "review";
+    state.index = 0;
+    saveSession();
+    render();
+    if (auto) alert("Time! The module was submitted automatically — you're now in review.");
   }
 
   // One-shot dry run so the flow can be verified before the plan starts.
@@ -495,8 +598,8 @@
           btn.textContent = "Done ✓";
           btn.disabled = true;
         } else {
-          btn.textContent = done > 0 ? "Continue" : "Start";
-          btn.addEventListener("click", function () { startPlanModule(mod); });
+          btn.textContent = done > 0 ? "Continue" : "Start module";
+          btn.addEventListener("click", function () { startExamModule(mod); });
         }
 
         rowEl.appendChild(name);
@@ -667,12 +770,33 @@
 
   function startTimer(offsetMs) {
     stopTimer();
+    el.timerEl.classList.remove("timer-low");
     state.timer = { start: Date.now() - (offsetMs || 0), intervalId: null, ticks: 0 };
     el.timerEl.textContent = fmtTime(offsetMs || 0);
     state.timer.intervalId = setInterval(function () {
       if (!state.timer) return;
       el.timerEl.textContent = fmtTime(Date.now() - state.timer.start);
-      // Persist elapsed time every few seconds so a resume is accurate.
+      if (++state.timer.ticks % 5 === 0) saveSession();
+    }, 1000);
+  }
+
+  // Bluebook-style countdown for exam modules; auto-submits at 0:00.
+  function startCountdown(remainingMs) {
+    stopTimer();
+    state.deadline = Date.now() + remainingMs;
+    el.timerEl.classList.toggle("timer-low", remainingMs < 5 * 60000);
+    el.timerEl.textContent = fmtTime(Math.max(0, remainingMs));
+    state.timer = { intervalId: null, ticks: 0, countdown: true };
+    state.timer.intervalId = setInterval(function () {
+      if (!state.timer) return;
+      var left = state.deadline - Date.now();
+      if (left <= 0) {
+        el.timerEl.textContent = "0:00";
+        submitExam(true);
+        return;
+      }
+      el.timerEl.textContent = fmtTime(left + 999); // ceil to whole seconds
+      el.timerEl.classList.toggle("timer-low", left < 5 * 60000);
       if (++state.timer.ticks % 5 === 0) saveSession();
     }, 1000);
   }
@@ -694,12 +818,19 @@
         setIds: state.set.map(function (q) { return q.id; }),
         label: state.setLabel,
         index: state.index,
-        elapsed: state.timer ? Date.now() - state.timer.start : 0,
+        elapsed: state.timer && !state.timer.countdown ? Date.now() - state.timer.start : 0,
         timerHidden: state.timerHidden,
         elimMode: state.elimMode,
         checked: state.checked,
         selectedLetter: state.selectedLetter,
         sprValue: el.sprInput.value || "",
+        mode: state.mode,
+        phase: state.phase,
+        answers: state.answers,
+        allottedMs: state.allottedMs,
+        remainingMs: state.mode === "exam" && state.phase !== "review"
+          ? Math.max(0, state.deadline - Date.now())
+          : 0,
       }));
     } catch (e) {}
   }
@@ -730,13 +861,26 @@
     state.timerHidden = !!snap.timerHidden;
     el.timerEl.classList.toggle("hidden", state.timerHidden);
     el.timerToggle.textContent = state.timerHidden ? "Show" : "Hide";
-    state.pendingRestore = {
-      checked: !!snap.checked,
-      selectedLetter: snap.selectedLetter || null,
-      sprValue: snap.sprValue || "",
-    };
+    state.mode = snap.mode === "exam" ? "exam" : "check";
+    state.phase = snap.phase || "answering";
+    state.answers = snap.answers || {};
+    state.allottedMs = snap.allottedMs || 0;
     state.view = "practice";
-    startTimer(snap.elapsed || 0);
+    if (state.mode === "exam") {
+      if (state.phase === "review") {
+        gradeSet(); // rebuild verdicts from stored answers
+      } else {
+        if (state.phase === "checkwork") state.phase = "answering";
+        startCountdown(Math.max(15000, snap.remainingMs || state.allottedMs || 60000));
+      }
+    } else {
+      state.pendingRestore = {
+        checked: !!snap.checked,
+        selectedLetter: snap.selectedLetter || null,
+        sprValue: snap.sprValue || "",
+      };
+      startTimer(snap.elapsed || 0);
+    }
     return true;
   }
 
@@ -769,11 +913,18 @@
   }
 
   function exitPractice() {
+    if (state.mode === "exam" && state.phase !== "review") {
+      if (!confirm("Exit without submitting? This module won't be scored or counted toward today.")) return;
+    }
     stopTimer();
     closeNavigator();
     if (state.setLabel === "Test run") {
       try { localStorage.setItem(TESTRUN_KEY, "1"); } catch (e) {} // button disappears for good
     }
+    state.mode = "check";
+    state.phase = "answering";
+    state.answers = {};
+    state.verdicts = {};
     state.view = "plan"; // home base is the plan
     saveSession(); // clears the snapshot
     render();
@@ -781,18 +932,30 @@
 
   function currentQ() { return state.set[state.index]; }
 
+  function isReview() { return state.mode === "exam" && state.phase === "review"; }
+
   function renderOptions(q) {
     el.options.innerHTML = "";
     var struck = state.struck[q.id] || {};
+    var review = isReview();
+    var sel = state.mode === "exam" ? state.answers[q.id] || null : state.selectedLetter;
+    var verdict = review ? state.verdicts[q.id] : null;
+
     q.options.forEach(function (opt) {
       var row = document.createElement("div");
-      row.className = "option-row" + (state.elimMode ? " elim-on" : "");
+      row.className = "option-row" + (state.elimMode && !review ? " elim-on" : "");
 
       var btn = document.createElement("button");
       btn.className = "option";
       btn.dataset.letter = opt.letter;
-      if (struck[opt.letter]) btn.classList.add("struck");
-      if (state.selectedLetter === opt.letter) btn.classList.add("selected");
+      if (!review && struck[opt.letter]) btn.classList.add("struck");
+      if (!review && sel === opt.letter) btn.classList.add("selected");
+      if (review) {
+        btn.disabled = true;
+        if (q.correct && q.correct.indexOf(opt.letter) !== -1) btn.classList.add("reveal-correct");
+        else if (sel === opt.letter && verdict === false) btn.classList.add("reveal-wrong");
+        else if (sel === opt.letter) btn.classList.add("selected");
+      }
       var letter = document.createElement("span");
       letter.className = "opt-letter";
       letter.textContent = opt.letter;
@@ -801,66 +964,93 @@
       body.innerHTML = L.sanitizeHtml(opt.html);
       btn.appendChild(letter);
       btn.appendChild(body);
-      btn.addEventListener("click", function () { selectOption(opt.letter); });
+      if (!review) btn.addEventListener("click", function () { selectOption(opt.letter); });
       row.appendChild(btn);
 
-      var elim = document.createElement("button");
-      elim.className = "elim-btn";
-      elim.title = struck[opt.letter] ? "Undo cross out" : "Cross out choice " + opt.letter;
-      elim.innerHTML = struck[opt.letter] ? "Undo" : "<span class='elim-letter'>" + opt.letter + "</span>";
-      elim.addEventListener("click", function () {
-        if (state.checked) return;
-        var s = state.struck[q.id] = state.struck[q.id] || {};
-        s[opt.letter] = !s[opt.letter];
-        if (s[opt.letter] && state.selectedLetter === opt.letter) state.selectedLetter = null;
-        saveStruck();
-        saveSession();
-        renderOptions(q);
-      });
-      row.appendChild(elim);
+      if (!review) {
+        var elim = document.createElement("button");
+        elim.className = "elim-btn";
+        elim.title = struck[opt.letter] ? "Undo cross out" : "Cross out choice " + opt.letter;
+        elim.innerHTML = struck[opt.letter] ? "Undo" : "<span class='elim-letter'>" + opt.letter + "</span>";
+        elim.addEventListener("click", function () {
+          if (state.checked) return;
+          var s = state.struck[q.id] = state.struck[q.id] || {};
+          s[opt.letter] = !s[opt.letter];
+          if (s[opt.letter]) {
+            if (state.selectedLetter === opt.letter) state.selectedLetter = null;
+            if (state.mode === "exam" && state.answers[q.id] === opt.letter) delete state.answers[q.id];
+          }
+          saveStruck();
+          saveSession();
+          renderOptions(q);
+        });
+        row.appendChild(elim);
+      }
 
       el.options.appendChild(row);
     });
   }
 
   function selectOption(letterWanted) {
-    if (state.checked) return;
+    if (state.checked || isReview()) return;
     var q = currentQ();
     if (!q || q.type !== "mcq") return;
     var struck = state.struck[q.id] || {};
     if (struck[letterWanted]) { struck[letterWanted] = false; saveStruck(); } // selecting un-strikes
+    if (state.mode === "exam") state.answers[q.id] = letterWanted;
     state.selectedLetter = letterWanted;
     saveSession();
     renderOptions(q);
+    renderNavigator();
   }
 
   function renderQuestion() {
     var q = currentQ();
-    state.selectedLetter = null;
+    if (!q) return;
+    var exam = state.mode === "exam";
+    var review = isReview();
+
+    if (exam && state.phase === "checkwork") { renderCheckWork(); return; }
+    el.checkwork.classList.add("hidden");
+    el.qArea.classList.remove("hidden");
+
+    state.selectedLetter = exam ? state.answers[q.id] || null : null;
     state.checked = false;
 
-    el.setLabel.textContent = state.setLabel;
+    el.setLabel.textContent = (review ? "Review — " : "") + state.setLabel;
     el.qNum.textContent = state.index + 1;
     el.bbPos.textContent = state.index + 1;
     el.bbTotal.textContent = state.set.length;
-    el.bbSkill.textContent = q.skill;
-    el.difficulty.textContent = L.difficultyLabel(q.difficulty);
+    el.bbSkill.textContent = review ? q.skill : (exam ? "" : q.skill); // no skill hints mid-exam
+    el.difficulty.textContent = exam && !review ? "" : L.difficultyLabel(q.difficulty);
     el.markBtn.classList.toggle("active", !!state.marked[q.id]);
     el.elimBtn.classList.toggle("active", state.elimMode);
+    el.elimBtn.classList.toggle("hidden", review);
+    el.backBtn.textContent = review ? "Finish review" : "Exit practice";
+
+    // Top-center: countdown during the module, score during review.
+    if (review) {
+      var sc = 0, gr = 0;
+      state.set.forEach(function (qq) {
+        var v = state.verdicts[qq.id];
+        if (v !== null && v !== undefined) { gr++; if (v === true) sc++; }
+      });
+      el.timerEl.textContent = sc + "/" + gr + " correct";
+      el.timerEl.classList.remove("hidden", "timer-low");
+      el.timerToggle.classList.add("hidden");
+    } else {
+      el.timerToggle.classList.remove("hidden");
+    }
 
     var hasStimulus = !!(q.stimulus && q.stimulus.trim());
     el.qArea.classList.toggle("single", !hasStimulus);
-    if (hasStimulus) {
-      el.stimulus.innerHTML = L.sanitizeHtml(q.stimulus);
-    } else {
-      el.stimulus.innerHTML = "";
-    }
-
+    el.stimulus.innerHTML = hasStimulus ? L.sanitizeHtml(q.stimulus) : "";
     el.stem.innerHTML = L.sanitizeHtml(q.stem);
 
     el.result.classList.add("hidden");
     el.rationaleWrap.classList.add("hidden");
     el.resultBanner.className = "result-banner";
+    el.checkRow.classList.toggle("hidden", exam); // no checking mid-exam or in review
     el.check.disabled = false;
     el.check.textContent = "Check Answer";
 
@@ -872,15 +1062,79 @@
       el.options.classList.add("hidden");
       el.options.innerHTML = "";
       el.spr.classList.remove("hidden");
-      el.sprInput.value = "";
-      el.sprInput.disabled = false;
+      el.sprInput.value = exam ? state.answers[q.id] || "" : "";
+      el.sprInput.disabled = review;
+    }
+
+    // Review: show the verdict banner + rationale, like the graded question page.
+    if (review) {
+      var v = state.verdicts[q.id];
+      var yourAns = state.answers[q.id];
+      el.result.classList.remove("hidden");
+      if (v === true) {
+        el.resultBanner.className = "result-banner correct";
+        el.resultBanner.textContent = "Correct" + (q.type === "spr" ? " — your answer: " + yourAns : "");
+      } else if (v === false) {
+        el.resultBanner.className = "result-banner incorrect";
+        el.resultBanner.textContent =
+          (yourAns ? "Incorrect — your answer: " + yourAns : "Not answered") +
+          (q.correct ? " · correct: " + q.correct.join(", ") : "");
+      } else {
+        el.resultBanner.className = "result-banner nokey";
+        el.resultBanner.textContent = "No structured answer key — see the explanation" + (yourAns ? " (your answer: " + yourAns + ")" : "");
+      }
+      if (q.rationale && q.rationale.trim()) {
+        el.rationale.innerHTML = L.sanitizeHtml(q.rationale);
+        el.rationaleWrap.classList.remove("hidden");
+      }
     }
 
     el.prev.disabled = state.index === 0;
-    el.next.disabled = state.index >= state.set.length - 1;
+    var last = state.index >= state.set.length - 1;
+    if (exam && !review) {
+      el.next.disabled = false;
+      el.next.textContent = last ? "Check work" : "Next";
+    } else {
+      el.next.textContent = "Next";
+      el.next.disabled = last;
+    }
     renderNavigator();
     window.scrollTo({ top: 0 });
     saveSession();
+  }
+
+  /* ---------------- check-your-work screen ---------------- */
+
+  function showCheckWork() {
+    state.phase = "checkwork";
+    closeNavigator();
+    saveSession();
+    renderCheckWork();
+  }
+
+  function renderCheckWork() {
+    el.qArea.classList.add("hidden");
+    el.checkwork.classList.remove("hidden");
+    el.cwTitle.textContent = state.setLabel + " — Check Your Work";
+    var answered = state.set.filter(function (q) { return state.answers[q.id] != null && state.answers[q.id] !== ""; }).length;
+    el.cwSub.textContent = answered + " of " + state.set.length + " answered. Unanswered questions count as wrong — on test day there's no going back after time expires.";
+    el.cwGrid.innerHTML = "";
+    state.set.forEach(function (q, i) {
+      var b = document.createElement("button");
+      b.className = "nav-cell";
+      b.textContent = i + 1;
+      if (state.answers[q.id] != null && state.answers[q.id] !== "") b.classList.add("answered");
+      if (state.marked[q.id]) b.classList.add("marked");
+      b.addEventListener("click", function () {
+        state.phase = "answering";
+        state.index = i;
+        renderQuestion();
+      });
+      el.cwGrid.appendChild(b);
+    });
+    el.prev.disabled = true;
+    el.next.disabled = true;
+    window.scrollTo({ top: 0 });
   }
 
   /* ---------------- question navigator ---------------- */
@@ -893,7 +1147,15 @@
       var b = document.createElement("button");
       b.className = "nav-cell";
       b.textContent = i + 1;
-      if (state.progress[q.id]) b.classList.add("answered");
+      if (isReview()) {
+        var v = state.verdicts[q.id];
+        if (v === true) b.classList.add("nav-right");
+        else if (v === false) b.classList.add("nav-wrong");
+      } else if (state.mode === "exam") {
+        if (state.answers[q.id] != null && state.answers[q.id] !== "") b.classList.add("answered");
+      } else if (state.progress[q.id]) {
+        b.classList.add("answered");
+      }
       if (state.marked[q.id]) b.classList.add("marked");
       if (i === state.index) b.classList.add("current");
       b.addEventListener("click", function () {
@@ -917,7 +1179,7 @@
   }
 
   function checkAnswer() {
-    if (state.checked || !state.set.length) return;
+    if (state.checked || !state.set.length || state.mode === "exam") return;
     var q = state.set[state.index];
     var verdict;
 
@@ -981,6 +1243,10 @@
 
   function go(delta) {
     var ni = state.index + delta;
+    if (ni >= state.set.length && state.mode === "exam" && state.phase === "answering") {
+      showCheckWork(); // Next on the last question leads to Check Your Work
+      return;
+    }
     if (ni < 0 || ni >= state.set.length) return;
     state.index = ni;
     renderQuestion();
@@ -1163,9 +1429,15 @@
   });
 
   el.check.addEventListener("click", checkAnswer);
+  $("btn-cw-back").addEventListener("click", function () {
+    state.phase = "answering";
+    renderQuestion();
+  });
+  $("btn-cw-submit").addEventListener("click", function () { submitExam(false); });
   el.sprInput.addEventListener("keydown", function (e) {
     if (e.key === "Enter") {
-      if (!state.checked) checkAnswer();
+      if (state.mode === "exam") go(1);
+      else if (!state.checked) checkAnswer();
       else go(1);
     }
   });
@@ -1206,7 +1478,17 @@
     saveSession();
   });
 
-  el.sprInput.addEventListener("input", function () { saveSession(); });
+  el.sprInput.addEventListener("input", function () {
+    if (state.mode === "exam" && state.phase === "answering") {
+      var q = currentQ();
+      if (q) {
+        var v = el.sprInput.value.trim();
+        if (v) state.answers[q.id] = v;
+        else delete state.answers[q.id];
+      }
+    }
+    saveSession();
+  });
 
   window.addEventListener("beforeunload", function () { saveSession(); });
 
@@ -1219,7 +1501,10 @@
     if (e.key === "ArrowRight") { go(1); return; }
     if (e.key === "Enter") {
       e.preventDefault(); // avoid double-firing via native button activation
-      if (state.checked) go(1);
+      if (state.mode === "exam") {
+        if (state.phase === "answering") go(1);
+        else if (state.phase === "review") go(1);
+      } else if (state.checked) go(1);
       else checkAnswer();
       return;
     }
