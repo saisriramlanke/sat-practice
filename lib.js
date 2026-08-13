@@ -88,10 +88,83 @@
     return d ? String(d) : "Unrated";
   }
 
-  // Strip <script> tags only; everything else is trusted College Board markup.
+  /*
+   * <mfenced> was removed from MathML Core, so Chrome silently drops the
+   * fences: "2(8x)" renders as "28x". College Board content uses it heavily
+   * (6,600+ occurrences), so rewrite it to explicit <mrow><mo>(...)</mo></mrow>.
+   * Handles open/close attributes (|x|, brackets) and multi-child separators.
+   */
+  function attrValue(attrs, name, dflt) {
+    var m = attrs.match(new RegExp(name + '\\s*=\\s*"([^"]*)"', "i"));
+    return m ? m[1] : dflt;
+  }
+
+  // Split MathML inner markup into top-level child elements; null if it
+  // contains top-level text or is malformed (caller then leaves it joined).
+  function splitTopLevelChildren(inner) {
+    var out = [];
+    var depth = 0;
+    var start = 0;
+    var re = /<\/?([a-zA-Z][\w:-]*)[^>]*?(\/?)>|[^<]+/g;
+    var m;
+    while ((m = re.exec(inner)) !== null) {
+      var tok = m[0];
+      if (tok.charAt(0) !== "<") {
+        if (depth === 0 && tok.trim() !== "") return null; // loose text at top level
+        continue;
+      }
+      var isClose = tok.charAt(1) === "/";
+      var selfClose = m[2] === "/";
+      if (isClose) {
+        depth--;
+        if (depth === 0) { out.push(inner.slice(start, m.index + tok.length)); start = m.index + tok.length; }
+        if (depth < 0) return null;
+      } else if (selfClose) {
+        if (depth === 0) { out.push(inner.slice(start, m.index + tok.length)); start = m.index + tok.length; }
+      } else {
+        if (depth === 0) start = m.index;
+        depth++;
+      }
+    }
+    if (depth !== 0) return null;
+    return out.filter(function (s) { return s.trim() !== ""; });
+  }
+
+  function fixMfenced(html) {
+    if (html.indexOf("<mfenced") === -1) return html;
+    var innermost = /<mfenced([^>]*)>((?:(?!<\/?mfenced)[\s\S])*?)<\/mfenced>/gi;
+    var guard = 0;
+    while (/<mfenced/i.test(html) && guard++ < 100) {
+      var before = html;
+      html = html.replace(innermost, function (_, attrs, inner) {
+        var open = attrValue(attrs, "open", "(");
+        var close = attrValue(attrs, "close", ")");
+        var sep = attrValue(attrs, "separators", ",").trim();
+        var body = inner;
+        var kids = splitTopLevelChildren(inner);
+        if (kids && kids.length > 1) {
+          var joiner = "<mo>" + (sep.charAt(0) || ",") + "</mo>";
+          body = kids.join(joiner);
+        }
+        return "<mrow>" +
+          (open ? "<mo>" + open + "</mo>" : "") +
+          body +
+          (close ? "<mo>" + close + "</mo>" : "") +
+          "</mrow>";
+      });
+      if (html === before) break; // malformed leftovers; don't loop forever
+    }
+    return html;
+  }
+
+  // Strip <script> tags, then repair markup Chrome can't display.
+  // Everything else is trusted College Board markup.
   function sanitizeHtml(html) {
     if (typeof html !== "string") return "";
-    return html.replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, "").replace(/<script\b[^>]*\/?>/gi, "");
+    var out = html
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, "")
+      .replace(/<script\b[^>]*\/?>/gi, "");
+    return fixMfenced(out);
   }
 
   function stripTags(html) {

@@ -181,6 +181,30 @@ eq(L.sanitizeHtml('<p>hi</p><script>alert(1)</script><b>ok</b>'), "<p>hi</p><b>o
 eq(L.sanitizeHtml('<p><math><mi>x</mi></math></p>'), "<p><math><mi>x</mi></math></p>", "mathml preserved");
 eq(L.sanitizeHtml('<img src="data:image/png;base64,AAAA">'), '<img src="data:image/png;base64,AAAA">', "img preserved");
 
+/* ---- mfenced repair (Chrome dropped <mfenced>) ---- */
+
+eq(
+  L.sanitizeHtml("<math><mfenced><mrow><mn>8</mn><mi>x</mi></mrow></mfenced></math>"),
+  "<math><mrow><mo>(</mo><mrow><mn>8</mn><mi>x</mi></mrow><mo>)</mo></mrow></math>",
+  "mfenced default parens"
+);
+eq(
+  L.sanitizeHtml('<math><mfenced open="|" close="|"><mi>x</mi></mfenced></math>'),
+  "<math><mrow><mo>|</mo><mi>x</mi><mo>|</mo></mrow></math>",
+  "mfenced custom fences (absolute value)"
+);
+eq(
+  L.sanitizeHtml("<math><mfenced><mn>0</mn><mn>22</mn></mfenced></math>"),
+  "<math><mrow><mo>(</mo><mn>0</mn><mo>,</mo><mn>22</mn><mo>)</mo></mrow></math>",
+  "mfenced multi-child gets comma separator"
+);
+eq(
+  L.sanitizeHtml("<math><mfenced><mrow><mfenced><mi>y</mi></mfenced></mrow></mfenced></math>"),
+  "<math><mrow><mo>(</mo><mrow><mrow><mo>(</mo><mi>y</mi><mo>)</mo></mrow></mrow><mo>)</mo></mrow></math>",
+  "nested mfenced"
+);
+assert(L.sanitizeHtml("<math><mfenced><mi>x</mi></math>").indexOf("<mfenced") !== -1 || true, "malformed mfenced does not hang");
+
 /* ---- numeric parsing ---- */
 
 eq(L.parseNumeric("3/2"), 1.5, "fraction");

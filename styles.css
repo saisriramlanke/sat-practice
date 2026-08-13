@@ -624,6 +624,57 @@ html, body {
 
 math { font-size: 1.05em; }
 
+/* ---------- College Board content markup ---------- */
+
+/* Screen-reader-only long descriptions (graph descriptions etc.) — CB ships
+   these expecting the host page to hide them. Without this they render as
+   giant visible bullet lists after every figure. */
+.sr-only, .visually-hidden, .screen-reader-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  margin: -1px !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  clip: rect(0 0 0 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+/* Figures and graphs */
+.stimulus-bb svg, .stem svg, .options svg, .rationale svg {
+  max-width: 100%;
+  height: auto;
+}
+.stimulus-bb figure, .stem figure, .rationale figure {
+  margin: 0 0 16px;
+  text-align: center;
+}
+figcaption { font-size: 13px; color: var(--muted); margin-top: 6px; }
+
+/* Data tables inside questions */
+.stimulus-bb table, .stem table, .options table, .rationale table {
+  border-collapse: collapse;
+  margin: 12px auto;
+}
+.stimulus-bb th, .stimulus-bb td,
+.stem th, .stem td,
+.options th, .options td,
+.rationale th, .rationale td {
+  border: 1px solid var(--ink);
+  padding: 6px 14px;
+  text-align: center;
+}
+
+/* CB paragraph classes carry no styles here; keep spacing tidy */
+.opt-body p { margin: 0; }
+.opt-body p + p { margin-top: 6px; }
+.stem p:first-child { margin-top: 0; }
+.stimulus-bb p:first-child { margin-top: 0; }
+
+/* Block math (centered equations) breathing room */
+.stem p > math:only-child, .stimulus-bb p > math:only-child { line-height: 1.9; }
+
 /* ---------- question navigator popup ---------- */
 
 .nav-popup {
