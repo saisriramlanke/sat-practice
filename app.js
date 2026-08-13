@@ -422,9 +422,12 @@
     var needM = Math.max(0, t.M - todayRow.done[mod].M);
     var size = EXAM[mod].size;
 
-    var hardPart = needH ? L.composeModule(mod, unansweredPool(mod, "H"), Math.min(needH, size)) : [];
+    // Exam modules only use gradable questions (a handful of legacy SPRs
+    // have no answer key; they stay available in topic-page practice).
+    function gradable(pool) { return pool.filter(function (q) { return q.correct; }); }
+    var hardPart = needH ? L.composeModule(mod, gradable(unansweredPool(mod, "H")), Math.min(needH, size)) : [];
     var medPart = needM && hardPart.length < size
-      ? L.composeModule(mod, unansweredPool(mod, "M"), Math.min(needM, size - hardPart.length))
+      ? L.composeModule(mod, gradable(unansweredPool(mod, "M")), Math.min(needM, size - hardPart.length))
       : [];
     var set = hardPart.concat(medPart);
     if (!set.length) {
@@ -1036,10 +1039,15 @@
       el.timerToggle.classList.remove("hidden");
     }
 
+    // Bluebook layout: only R&W splits the screen (passage left / question
+    // right). Math is always a single column with any figure above the stem.
     var hasStimulus = !!(q.stimulus && q.stimulus.trim());
-    el.qArea.classList.toggle("single", !hasStimulus);
-    el.stimulus.innerHTML = hasStimulus ? L.sanitizeHtml(q.stimulus) : "";
-    el.stem.innerHTML = L.sanitizeHtml(q.stem);
+    var splitScreen = hasStimulus && q.module !== "Math";
+    el.qArea.classList.toggle("single", !splitScreen);
+    el.stimulus.innerHTML = splitScreen ? L.sanitizeHtml(q.stimulus) : "";
+    el.stem.innerHTML =
+      (hasStimulus && !splitScreen ? '<div class="math-figure">' + L.sanitizeHtml(q.stimulus) + "</div>" : "") +
+      L.sanitizeHtml(q.stem);
 
     el.result.classList.add("hidden");
     el.rationaleWrap.classList.add("hidden");
@@ -1153,6 +1161,7 @@
       if (state.marked[q.id]) b.classList.add("marked");
       if (i === state.index) b.classList.add("current");
       b.addEventListener("click", function () {
+        if (state.mode === "exam" && state.phase === "checkwork") state.phase = "answering";
         state.index = i;
         renderQuestion();
       });
@@ -1491,6 +1500,7 @@
     if (!el.modal.classList.contains("hidden")) return;
     if (e.key === "Escape") { closeNavigator(); return; }
     if (e.target === el.sprInput || e.target === el.pasteInput) return;
+    if (state.mode === "exam" && state.phase === "checkwork") return; // buttons only
     if (e.key === "ArrowLeft") { go(-1); return; }
     if (e.key === "ArrowRight") { go(1); return; }
     if (e.key === "Enter") {

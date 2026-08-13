@@ -415,6 +415,10 @@ html, body {
 
 .stem img, .options img, .rationale img { max-width: 100%; height: auto; }
 
+/* Math figure above the stem (Bluebook keeps Math single-column) */
+.math-figure { margin-bottom: 18px; }
+.math-figure img, .math-figure svg { max-width: 100%; height: auto; }
+
 /* options */
 
 .options { display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px; }

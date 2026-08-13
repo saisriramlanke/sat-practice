@@ -157,6 +157,29 @@
     return html;
   }
 
+  /*
+   * <menclose> is also missing from MathML Core; CB uses notation="top" for
+   * overlines (repeating decimals, line segments). Rewrite to <mover> with a
+   * stretchy macron; unknown notations just unwrap so content stays visible.
+   */
+  function fixMenclose(html) {
+    if (html.indexOf("<menclose") === -1) return html;
+    var innermost = /<menclose([^>]*)>((?:(?!<\/?menclose)[\s\S])*?)<\/menclose>/gi;
+    var guard = 0;
+    while (/<menclose/i.test(html) && guard++ < 50) {
+      var before = html;
+      html = html.replace(innermost, function (_, attrs, inner) {
+        var notation = attrValue(attrs, "notation", "");
+        if (/\btop\b|\boverline\b/i.test(notation)) {
+          return '<mover accent="true"><mrow>' + inner + '</mrow><mo stretchy="true">&#x00AF;</mo></mover>';
+        }
+        return "<mrow>" + inner + "</mrow>"; // unwrap unknown notations
+      });
+      if (html === before) break;
+    }
+    return html;
+  }
+
   // Strip <script> tags, then repair markup Chrome can't display.
   // Everything else is trusted College Board markup.
   function sanitizeHtml(html) {
@@ -164,7 +187,7 @@
     var out = html
       .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, "")
       .replace(/<script\b[^>]*\/?>/gi, "");
-    return fixMfenced(out);
+    return fixMenclose(fixMfenced(out));
   }
 
   function stripTags(html) {

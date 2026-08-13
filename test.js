@@ -205,6 +205,45 @@ eq(
 );
 assert(L.sanitizeHtml("<math><mfenced><mi>x</mi></math>").indexOf("<mfenced") !== -1 || true, "malformed mfenced does not hang");
 
+/* ---- menclose repair ---- */
+
+eq(
+  L.sanitizeHtml('<math><menclose notation="top"><mn>3</mn></menclose></math>'),
+  '<math><mover accent="true"><mrow><mn>3</mn></mrow><mo stretchy="true">&#x00AF;</mo></mover></math>',
+  "menclose top becomes overline"
+);
+eq(
+  L.sanitizeHtml('<math><menclose notation="box"><mi>x</mi></menclose></math>'),
+  "<math><mrow><mi>x</mi></mrow></math>",
+  "unknown menclose notation unwraps"
+);
+
+/* ---- module composition ---- */
+
+function fakeQ(id, domain, skillCode, type) {
+  return { id: String(id), module: "Math", domain: domain, skillCode: skillCode, type: type || "mcq", correct: ["1"], difficulty: "H" };
+}
+var fakePool = [];
+var domains = ["Algebra", "Advanced Math", "Problem-Solving and Data Analysis", "Geometry and Trigonometry"];
+domains.forEach(function (d, di) {
+  for (var i = 0; i < 40; i++) fakePool.push(fakeQ(d + i, d, "X", i < 8 ? "spr" : "mcq"));
+});
+var modSet = L.composeModule("Math", fakePool, 22);
+eq(modSet.length, 22, "module fills to 22");
+var byDom = {};
+modSet.forEach(function (q) { byDom[q.domain] = (byDom[q.domain] || 0) + 1; });
+assert(byDom["Algebra"] >= 6 && byDom["Algebra"] <= 9, "algebra ~35%");
+assert(byDom["Advanced Math"] >= 6 && byDom["Advanced Math"] <= 9, "advanced ~35%");
+assert((byDom["Problem-Solving and Data Analysis"] || 0) >= 2 && byDom["Problem-Solving and Data Analysis"] <= 5, "psda ~15%");
+var sprN = modSet.filter(function (q) { return q.type === "spr"; }).length;
+assert(sprN >= 4 && sprN <= 7, "spr count realistic (got " + sprN + ")");
+var ids = {};
+assert(modSet.every(function (q) { if (ids[q.id]) return false; ids[q.id] = 1; return true; }), "no duplicate questions");
+
+// depleted domain backfills
+var tinyPool = fakePool.filter(function (q) { return q.domain !== "Algebra"; });
+eq(L.composeModule("Math", tinyPool, 22).length, 22, "backfill when a domain is empty");
+
 /* ---- numeric parsing ---- */
 
 eq(L.parseNumeric("3/2"), 1.5, "fraction");
