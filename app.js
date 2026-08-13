@@ -17,12 +17,13 @@
   var DB_NAME = "sat-practice";
   var Q_STORE = "questions";
   var P_STORE = "progress"; // { id, correct: true|false|null, ts }
+  var M_STORE = "modules";  // archived exam modules: set, answers, verdicts, score
   var dbPromise = null;
 
   function openDb() {
     if (dbPromise) return dbPromise;
     dbPromise = new Promise(function (resolve, reject) {
-      var req = indexedDB.open(DB_NAME, 2);
+      var req = indexedDB.open(DB_NAME, 3);
       req.onupgradeneeded = function () {
         var db = req.result;
         if (!db.objectStoreNames.contains(Q_STORE)) {
@@ -30,6 +31,9 @@
         }
         if (!db.objectStoreNames.contains(P_STORE)) {
           db.createObjectStore(P_STORE, { keyPath: "id" });
+        }
+        if (!db.objectStoreNames.contains(M_STORE)) {
+          db.createObjectStore(M_STORE, { keyPath: "id" });
         }
       };
       req.onsuccess = function () { resolve(req.result); };
@@ -108,6 +112,9 @@
     verdicts: {},         // review only: qid -> true|false|null
     allottedMs: 0,        // exam countdown allotment
     deadline: 0,          // exam countdown end timestamp
+    modules: [],          // archived module records (history)
+    isHistory: false,     // reviewing an archived module (no re-recording)
+    recoveredReview: false, // archived module without stored answer letters
     set: [],              // current practice set
     index: 0,
     selectedLetter: null,
@@ -134,6 +141,7 @@
     planPools: $("plan-pools"),
     todayCard: $("today-card"),
     planDays: $("plan-days"),
+    moduleHistory: $("module-history"),
     topicsView: $("topics-view"),
     moduleTitle: $("module-title"),
     practiceAllSub: $("practice-all-sub"),
@@ -500,11 +508,103 @@
       recs.push(rec);
     });
     dbPutAll(P_STORE, recs).catch(function (e) { console.error("Failed to save progress:", e); });
+
+    // Archive the module so its review can be revisited any time.
+    var modRecord = {
+      id: "m-" + Date.now() + "-" + Math.floor(Math.random() * 1e6),
+      ts: Date.now(),
+      day: dateKey(new Date()),
+      label: state.setLabel,
+      module: state.set[0] ? state.set[0].module : "",
+      setIds: state.set.map(function (q) { return q.id; }),
+      answers: state.answers,
+      verdicts: state.verdicts,
+      score: res.score,
+      gradeable: res.gradeable,
+      n: state.set.length,
+    };
+    state.modules.push(modRecord);
+    dbPutAll(M_STORE, [modRecord]).catch(function (e) { console.error("Failed to archive module:", e); });
+
     state.phase = "review";
     state.index = 0;
     saveSession();
     render();
     if (auto) alert("Time! The module was submitted automatically — you're now in review.");
+  }
+
+  // Re-enter the review of an archived module (read-only; nothing re-records).
+  function openHistoryReview(rec) {
+    var byId = {};
+    state.all.forEach(function (q) { byId[q.id] = q; });
+    var set = rec.setIds.map(function (id) { return byId[id]; }).filter(Boolean);
+    if (!set.length) { alert("The questions for this module are no longer in the bank."); return; }
+    stopTimer();
+    state.set = set;
+    state.index = 0;
+    state.setLabel = rec.label;
+    state.mode = "exam";
+    state.phase = "review";
+    state.answers = rec.answers || {};
+    state.verdicts = rec.verdicts || {};
+    state.isHistory = true;
+    state.recoveredReview = !!rec.recovered;
+    state.view = "practice";
+    render();
+  }
+
+  // One-time recovery: modules submitted before archiving existed (Day 1)
+  // are reconstructed from that day's per-question records. Answer letters
+  // weren't stored back then, so those reviews show verdicts + rationales.
+  function recoverHistoryIfNeeded() {
+    if (state.modules.length) return Promise.resolve();
+    var groups = {}; // day|module -> [progress rec]
+    var byId = {};
+    state.all.forEach(function (q) { byId[q.id] = q; });
+    Object.keys(state.progress).forEach(function (qid) {
+      var p = state.progress[qid];
+      var q = byId[qid];
+      if (!q || !p.ts) return;
+      var k = dateKey(new Date(p.ts)) + "|" + q.module;
+      (groups[k] = groups[k] || []).push({ p: p, q: q });
+    });
+    var recs = [];
+    Object.keys(groups).forEach(function (k) {
+      var g = groups[k];
+      if (g.length < 5) return; // ignore stray browsing answers
+      var parts = k.split("|");
+      var verdicts = {};
+      var score = 0, gradeable = 0;
+      g.forEach(function (x) {
+        verdicts[x.q.id] = x.p.correct;
+        if (x.p.correct !== null && x.p.correct !== undefined) { gradeable++; if (x.p.correct === true) score++; }
+      });
+      var ids = g.map(function (x) { return x.q.id; });
+      if (parts[1] === "Reading & Writing") {
+        ids.sort(function (a, b) {
+          var ia = L.RW_SKILL_ORDER.indexOf(byId[a].skillCode);
+          var ib = L.RW_SKILL_ORDER.indexOf(byId[b].skillCode);
+          return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+        });
+      }
+      recs.push({
+        id: "m-recovered-" + k.replace(/[^\w-]/g, ""),
+        ts: g[0].p.ts,
+        day: parts[0],
+        label: parts[0] + " — " + (parts[1] === "Math" ? "Math" : "R&W") + " module",
+        module: parts[1],
+        setIds: ids,
+        answers: {},
+        verdicts: verdicts,
+        score: score,
+        gradeable: gradeable,
+        n: g.length,
+        recovered: true,
+      });
+    });
+    if (!recs.length) return Promise.resolve();
+    state.modules = recs;
+    return dbPutAll(M_STORE, recs).catch(function (e) { console.error(e); });
   }
 
   // One-shot dry run so the flow can be verified before the plan starts.
@@ -604,6 +704,45 @@
         rowEl.appendChild(prog);
         rowEl.appendChild(btn);
         el.todayCard.appendChild(rowEl);
+      });
+    }
+
+    // Module history (newest first) — every submitted module stays reviewable.
+    el.moduleHistory.innerHTML = "";
+    if (!state.modules.length) {
+      var empty = document.createElement("div");
+      empty.className = "hist-empty";
+      empty.textContent = "Submitted modules will appear here — you can reopen any review whenever you want.";
+      el.moduleHistory.appendChild(empty);
+    } else {
+      state.modules.slice().sort(function (a, b) { return b.ts - a.ts; }).forEach(function (rec) {
+        var row = document.createElement("div");
+        row.className = "hist-row";
+
+        var when = document.createElement("span");
+        when.className = "hist-when";
+        when.textContent = new Date(rec.ts).toLocaleDateString(undefined, DAY_FMT);
+
+        var label = document.createElement("span");
+        label.className = "hist-label";
+        label.textContent = rec.label + (rec.recovered ? " (recovered)" : "");
+
+        var score = document.createElement("span");
+        score.className = "hist-score";
+        var pct = rec.gradeable ? Math.round((rec.score / rec.gradeable) * 100) : null;
+        score.textContent = rec.score + "/" + rec.gradeable;
+        if (pct !== null) score.classList.add(pct >= 66 ? "acc-good" : pct >= 40 ? "acc-mid" : "acc-bad");
+
+        var btn = document.createElement("button");
+        btn.className = "btn btn-sm";
+        btn.textContent = "Review";
+        btn.addEventListener("click", function () { openHistoryReview(rec); });
+
+        row.appendChild(when);
+        row.appendChild(label);
+        row.appendChild(score);
+        row.appendChild(btn);
+        el.moduleHistory.appendChild(row);
       });
     }
 
@@ -807,7 +946,7 @@
 
   function saveSession() {
     try {
-      if (state.view !== "practice" || !state.set.length) {
+      if (state.view !== "practice" || !state.set.length || state.isHistory) {
         localStorage.removeItem("sat-session");
         return;
       }
@@ -922,6 +1061,8 @@
     state.phase = "answering";
     state.answers = {};
     state.verdicts = {};
+    state.isHistory = false;
+    state.recoveredReview = false;
     state.view = "plan"; // home base is the plan
     saveSession(); // clears the snapshot
     render();
@@ -1079,7 +1220,9 @@
       } else if (v === false) {
         el.resultBanner.className = "result-banner incorrect";
         el.resultBanner.textContent =
-          (yourAns ? "Incorrect — your answer: " + yourAns : "Not answered") +
+          (yourAns ? "Incorrect — your answer: " + yourAns
+            : state.recoveredReview ? "Incorrect (answer letter not recorded)"
+            : "Not answered") +
           (q.correct ? " · correct: " + q.correct.join(", ") : "");
       } else {
         el.resultBanner.className = "result-banner nokey";
@@ -1544,12 +1687,13 @@
   $("btn-reset-progress").addEventListener("click", function () {
     var n = Object.keys(state.progress).length;
     if (!n && !Object.keys(state.daily).length) return;
-    if (!confirm("Reset ALL progress — " + n + " answered questions, daily tallies, marks, and cross-outs? Questions themselves are kept.")) return;
-    dbClear(P_STORE).then(function () {
+    if (!confirm("Reset ALL progress — " + n + " answered questions, daily tallies, marks, cross-outs, and module history? Questions themselves are kept.")) return;
+    Promise.all([dbClear(P_STORE), dbClear(M_STORE)]).then(function () {
       state.progress = {};
       state.daily = {};
       state.marked = {};
       state.struck = {};
+      state.modules = [];
       try {
         localStorage.removeItem("sat-session");
         localStorage.removeItem("sat-marks");
@@ -1564,11 +1708,12 @@
   $("btn-clear").addEventListener("click", function () {
     if (!state.all.length) return;
     if (!confirm("Delete all " + state.all.length + " imported questions and all progress? This cannot be undone.")) return;
-    Promise.all([dbClear(Q_STORE), dbClear(P_STORE)]).then(function () {
+    Promise.all([dbClear(Q_STORE), dbClear(P_STORE), dbClear(M_STORE)]).then(function () {
       state.all = [];
       state.progress = {};
       state.marked = {};
       state.struck = {};
+      state.modules = [];
       state.module = null;
       state.view = "topics";
       try {
@@ -1610,10 +1755,13 @@
 
   /* ---------------- init ---------------- */
 
-  Promise.all([dbGetAll(Q_STORE), dbGetAll(P_STORE)]).then(function (res) {
+  Promise.all([dbGetAll(Q_STORE), dbGetAll(P_STORE), dbGetAll(M_STORE)]).then(function (res) {
     state.all = L.sortQuestions(res[0]);
     res[1].forEach(function (p) { state.progress[p.id] = p; });
+    state.modules = res[2] || [];
     return maybeImportPreload();
+  }).then(function () {
+    return recoverHistoryIfNeeded();
   }).then(function () {
     state.module = modulesPresent()[0] || null;
     loadPrefs();

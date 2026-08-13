@@ -230,6 +230,25 @@ html, body {
 .today-prog { display: flex; align-items: center; gap: 10px; flex: 1; }
 .bar-done { background: var(--green); }
 
+/* module history */
+
+.module-history { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+
+.hist-empty { padding: 16px; font-size: 13px; color: var(--muted); }
+
+.hist-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 16px;
+  font-size: 13.5px;
+  border-bottom: 1px solid var(--border);
+}
+.hist-row:last-child { border-bottom: none; }
+.hist-when { width: 110px; flex: none; color: var(--muted); }
+.hist-label { flex: 1; font-weight: 600; }
+.hist-score { flex: none; font-variant-numeric: tabular-nums; font-weight: 700; }
+
 .plan-days { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
 
 .plan-day {
