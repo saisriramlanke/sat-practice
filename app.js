@@ -409,45 +409,39 @@
     return Math.round((parseDay(row.key) - parseDay(PLAN.start)) / 86400000) + 1;
   }
 
-  // Order a set the way the real test orders it.
-  function orderLikeTestDay(mod, set) {
-    if (mod === "Reading & Writing") {
-      return set.slice().sort(function (a, b) {
-        var ia = RW_SKILL_ORDER.indexOf(a.skillCode);
-        var ib = RW_SKILL_ORDER.indexOf(b.skillCode);
-        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
-      });
-    }
-    return shuffle(set); // Math intersperses domains and SPR
-  }
-
-  // Compose a Math chunk with the real MC/SPR ratio (~17 MC + 5 SPR per 22).
-  function composeMathChunk(pool, n) {
-    var sprWant = Math.round(n * EXAM["Math"].spr / EXAM["Math"].size);
-    var sprs = shuffle(pool.filter(function (q) { return q.type === "spr"; })).slice(0, sprWant);
-    var mcqs = shuffle(pool.filter(function (q) { return q.type === "mcq"; })).slice(0, n - sprs.length);
-    var out = mcqs.concat(sprs);
-    if (out.length < n) {
-      var used = {};
-      out.forEach(function (q) { used[q.id] = true; });
-      out = out.concat(shuffle(pool.filter(function (q) { return !used[q.id]; })).slice(0, n - out.length));
-    }
-    return out;
-  }
-
-  // Start a timed exam module for today's remaining plan dose (max one real module).
+  // Start a timed exam module for today's remaining plan dose (max one real
+  // module), composed to the official blueprint: real domain distribution,
+  // real SPR count for Math, real skill ordering for R&W. Composition draws
+  // from the FULL unanswered pools so domain quotas can always be honored;
+  // today's remaining hard/medium targets only cap the size.
   function startExamModule(mod) {
     var todayRow = todayRowOf();
     if (!todayRow) { alert("Today is outside the plan window."); return; }
-    var pool = buildPlanSet(mod, todayRow);
-    if (!pool.length) {
+    var t = todayRow.targets[mod] || { H: 0, M: 0 };
+    var needH = Math.max(0, t.H - todayRow.done[mod].H);
+    var needM = Math.max(0, t.M - todayRow.done[mod].M);
+    var size = EXAM[mod].size;
+
+    var hardPart = needH ? L.composeModule(mod, unansweredPool(mod, "H"), Math.min(needH, size)) : [];
+    var medPart = needM && hardPart.length < size
+      ? L.composeModule(mod, unansweredPool(mod, "M"), Math.min(needM, size - hardPart.length))
+      : [];
+    var set = hardPart.concat(medPart);
+    if (!set.length) {
       alert("Today's " + mod + " dose is already done (or the pools are empty).");
       return;
     }
-    var size = EXAM[mod].size;
-    var n = Math.min(pool.length, size);
-    var set = mod === "Math" ? composeMathChunk(pool, n) : shuffle(pool).slice(0, n);
-    set = orderLikeTestDay(mod, set);
+    // Re-order the merged set as one module.
+    if (mod === "Reading & Writing") {
+      set.sort(function (a, b) {
+        var ia = L.RW_SKILL_ORDER.indexOf(a.skillCode);
+        var ib = L.RW_SKILL_ORDER.indexOf(b.skillCode);
+        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+      });
+    } else {
+      set = shuffle(set);
+    }
+    var n = set.length;
 
     state.set = set;
     state.index = 0;

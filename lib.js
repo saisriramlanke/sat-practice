@@ -439,6 +439,135 @@
     return tree;
   }
 
+  /* ---------------- exam module composition (official blueprint) ---------------- */
+
+  // College Board assessment framework: operational domain weights.
+  var BLUEPRINT = {
+    "Math": [
+      ["Algebra", 0.35],
+      ["Advanced Math", 0.35],
+      ["Problem-Solving and Data Analysis", 0.15],
+      ["Geometry and Trigonometry", 0.15],
+    ],
+    "Reading & Writing": [
+      ["Craft and Structure", 0.28],
+      ["Information and Ideas", 0.26],
+      ["Standard English Conventions", 0.26],
+      ["Expression of Ideas", 0.20],
+    ],
+  };
+
+  // RW modules present skills in this order on the real test.
+  var RW_SKILL_ORDER = ["WIC", "TSP", "CTC", "CID", "COE", "INF", "BOU", "FSS", "TRA", "SYN"];
+
+  function shuffleArr(arr, rng) {
+    var a = arr.slice();
+    var rand = rng || Math.random;
+    for (var i = a.length - 1; i > 0; i--) {
+      var j = Math.floor(rand() * (i + 1));
+      var tmp = a[i]; a[i] = a[j]; a[j] = tmp;
+    }
+    return a;
+  }
+
+  // Largest-remainder allocation of n questions across a module's domains,
+  // with ±1 jitter so consecutive modules aren't identical.
+  function domainQuotas(mod, n, rng) {
+    var rand = rng || Math.random;
+    var doms = BLUEPRINT[mod] || [];
+    var quotas = {};
+    var floors = [];
+    var used = 0;
+    doms.forEach(function (d) {
+      var exact = n * d[1];
+      var f = Math.floor(exact);
+      quotas[d[0]] = f;
+      used += f;
+      floors.push({ name: d[0], frac: exact - f });
+    });
+    floors.sort(function (a, b) { return b.frac - a.frac; });
+    for (var i = 0; used < n; i = (i + 1) % floors.length) {
+      quotas[floors[i].name]++;
+      used++;
+    }
+    if (doms.length > 1 && rand() < 0.5) { // jitter: shift one question
+      var names = doms.map(function (d) { return d[0]; });
+      var from = names[Math.floor(rand() * names.length)];
+      var to = names[Math.floor(rand() * names.length)];
+      if (from !== to && quotas[from] > 1) { quotas[from]--; quotas[to]++; }
+    }
+    return quotas;
+  }
+
+  /*
+   * Compose an exam module from a question pool following the real test's
+   * domain distribution, SPR count (Math), and skill ordering (RW).
+   * Falls back gracefully when a domain's pool runs dry: the shortfall is
+   * filled from whatever remains, so late-plan modules still fill up.
+   */
+  function composeModule(mod, pool, n, rng) {
+    var rand = rng || Math.random;
+    n = Math.min(n, pool.length);
+    if (!n) return [];
+    var quotas = domainQuotas(mod, n, rng);
+    var used = {};
+    var picked = [];
+
+    function take(q) { used[q.id] = true; picked.push(q); }
+
+    // Math: place the real number of student-produced responses first.
+    if (mod === "Math") {
+      var sprPerModule = rand() < 0.5 ? 5 : 6;
+      var sprTarget = Math.max(pool.some(function (q) { return q.type === "spr"; }) ? 1 : 0,
+        Math.round(n * sprPerModule / 22));
+      var sprs = shuffleArr(pool.filter(function (q) { return q.type === "spr"; }), rng);
+      for (var s = 0; s < sprs.length && sprTarget > 0; s++) {
+        var qs = sprs[s];
+        if (quotas[qs.domain] > 0) {
+          take(qs);
+          quotas[qs.domain]--;
+          sprTarget--;
+        }
+      }
+    }
+
+    // Fill each domain quota (Math: multiple choice preferred from here on).
+    var byDomain = {};
+    pool.forEach(function (q) {
+      if (used[q.id]) return;
+      (byDomain[q.domain] = byDomain[q.domain] || []).push(q);
+    });
+    Object.keys(quotas).forEach(function (dom) {
+      var candidates = shuffleArr(byDomain[dom] || [], rng);
+      if (mod === "Math") {
+        candidates = candidates.filter(function (q) { return q.type === "mcq"; })
+          .concat(candidates.filter(function (q) { return q.type === "spr"; }));
+      }
+      for (var i = 0; i < candidates.length && quotas[dom] > 0; i++) {
+        take(candidates[i]);
+        quotas[dom]--;
+      }
+    });
+
+    // Shortfall (a domain ran dry): fill from anything left.
+    if (picked.length < n) {
+      var rest = shuffleArr(pool.filter(function (q) { return !used[q.id]; }), rng);
+      for (var r = 0; r < rest.length && picked.length < n; r++) take(rest[r]);
+    }
+
+    // Order: RW follows the real skill sequence; Math intersperses everything.
+    if (mod === "Reading & Writing") {
+      picked.sort(function (a, b) {
+        var ia = RW_SKILL_ORDER.indexOf(a.skillCode);
+        var ib = RW_SKILL_ORDER.indexOf(b.skillCode);
+        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+      });
+    } else {
+      picked = shuffleArr(picked, rng);
+    }
+    return picked;
+  }
+
   var DIFF_ORDER = { E: 0, M: 1, H: 2 };
 
   function sortQuestions(list) {
@@ -463,6 +592,9 @@
     gradeMcq: gradeMcq,
     buildTree: buildTree,
     sortQuestions: sortQuestions,
+    composeModule: composeModule,
+    domainQuotas: domainQuotas,
+    RW_SKILL_ORDER: RW_SKILL_ORDER,
     moduleLabel: moduleLabel,
     difficultyLabel: difficultyLabel,
     letterFromIndex: letterFromIndex,
